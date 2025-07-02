@@ -19,7 +19,7 @@ We use the **Kaggle “Emotion”** dataset (28 k samples, 6 labels - anger; fea
 
 ## 🗂️ Project Structure
 ```text
-emotion_detection_project/
+emotion_detection/
 ├── data/                # raw & processed data
 ├── notebooks/           # exploration & training notebooks
 ├── scripts/             # batch/CI scripts
