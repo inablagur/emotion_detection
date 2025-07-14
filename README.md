@@ -58,15 +58,19 @@ emotion_detection/
 
 ## ⚙️ Setup
 
-1. **Clone the repo**  
+1. **Python version**  
+   This project requires **Python 3.8–3.10**.<br>
+   However, It was tested on python 3.10
+
+2. **Clone the repo**  
    ```bash
    git clone git@github.com:YOUR_USERNAME/emotion_detection_project.git
    cd emotion_detection_project
 
-2. **Install Requirements**  
+3. **Install Requirements**  
    ```bash
    pip install -r requirements.txt
 
-3. **Kick off**  
+4. **Kick off**  
    ```bash
    python scripts/tfidf_baseline.py --data_path data/emotion.csv --output_dir models/tfidf
