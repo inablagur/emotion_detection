@@ -19,14 +19,28 @@ We use the **Kaggle “Emotion”** dataset (28 k samples, 6 labels - anger; fea
 
 ## 🗂️ Project Structure
 ```text
-emotion_detection/
-├── data/                # raw & processed data
-├── notebooks/           # exploration & training notebooks
-├── scripts/             # batch/CI scripts
-├── models/              # saved checkpoints
-├── README.md            # this file
-├── requirements.txt     # Python deps
-└── .gitignore           # ignore rules
+emotion_detection/        
+│
+├── data/                             ← All raw & split datasets
+│   ├── train.csv                     ← Training examples (text + emotion)
+│   ├── validation.csv                ← Validation examples
+│   └── test.csv                      ← Test examples
+│
+├── scripts/                          ← Helper scripts for data prep & model runs, executable entry points.
+│   └── load_data.py                  ← Loads HF “emotion” dataset, writes train/val/test CSVs
+│
+├── notebooks/                        ← Jupyter notebooks, aligned with milestones
+│   ├── 01_data_exploration.ipynb     ← Explore data: counts, lengths, quirks
+│   ├── 02_tfidf_baseline.ipynb       ← Baseline models with TF–IDF + classifiers
+│   ├── 03_transformer_finetune.ipynb ← Fine-tune BERT & DistilBERT
+│   └── 04_compare_and_plot.ipynb     ← Compare metrics, times, and produce visuals
+│
+├── models/                           ← Saved model checkpoints (populates later)
+│
+├── README.md                         ← High-level overview, setup, and workflow
+├── requirements.txt                  ← Pinned dependencies (Python 3.10)
+└── .gitignore                        ← Files/folders to omit from Git
+
 ```
 ---
 
@@ -58,19 +72,56 @@ emotion_detection/
 
 ## ⚙️ Setup
 
-1. **Python version**  
-   This project requires **Python 3.8–3.10**.<br>
-   However, It was tested on python 3.10
-
+1. **Python & environment**  
+   - Requires Python 3.8–3.10 (tested on 3.10)  
+     
 2. **Clone the repo**  
    ```bash
-   git clone git@github.com:YOUR_USERNAME/emotion_detection_project.git
-   cd emotion_detection_project
+   git clone git@github.com:YOUR_USERNAME/emotion_detection.git
+   cd emotion_detection
 
 3. **Install Requirements**  
    ```bash
    pip install -r requirements.txt
 
-4. **Kick off**  
+4. **Prepare the data**  
    ```bash
-   python scripts/tfidf_baseline.py --data_path data/emotion.csv --output_dir models/tfidf
+   python scripts/load_data.py
+
+5. **(To be added)**
+    - Model training scripts (TF-IDF, transformer)
+    - Evaluation & comparison tools
+    - Demo deployment commands
+---
+
+## 📍 Roadmap & Status
+
+Below is a high-level checklist of our project milestones.  
+✔️ Completed ⚪️ Pending
+
+- ✔️ **Project Kick-off**  
+  - [x] Repo created  
+  - [x] README & .gitignore added  
+  - [x] Environment & deps installed
+
+- ⚪️ **Data Gathering & Exploration**  
+  - [x] Download & split dataset  
+  - [ ] `01_data_exploration.ipynb` completed
+
+- ⚪️ **Build Simple (Shallow) Models**  
+  - [ ] `02_tfidf_baseline.ipynb`  
+  - [ ] Evaluate & record metrics
+
+- ⚪️ **Build Transformer Models**  
+  - [ ] `03_transformer_finetune.ipynb`  
+  - [ ] Track train time / memory
+
+- ⚪️ **Compare & Visualize Results**  
+  - [ ] `04_compare_and_plot.ipynb`
+
+- ⚪️ **(Optional) Explainability**  
+  - [ ] `05_explainability.ipynb`
+
+- ⚪️ **Polish & Publish**  
+  - [ ] Final README updates  
+  - [ ] Demo deployment / release tag
