@@ -1,9 +1,3 @@
-# Ignore generated CSV splits
-data/*.csv
-
-# keep the folder and its .gitkeep
-!data/.gitkeep
-
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
