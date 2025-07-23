@@ -1,3 +1,6 @@
+# Ignore tasks and status notes
+what to do.md
+
 # Ignore generated CSV splits
 data/*.csv
 
