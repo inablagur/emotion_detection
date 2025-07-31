@@ -106,7 +106,12 @@ Below is a high-level checklist of our project milestones.
 
 - ⚪️ **Data Gathering & Exploration**  
   - [x] Download & split dataset  
-  - [ ] `01_data_exploration.ipynb` completed
+  - [x] `01_data_exploration.ipynb` completed
+
+- ⚪️ **Data Cleaning & Preprocessing**  
+  - [ ] Implement the modules individually and test them one by one
+  - [ ] Integrate all individual modules into main clean_df function and test
+  - [ ] Integrate into `scripts/2_clean_data.py`
 
 - ⚪️ **Build Simple (Shallow) Models**  
   - [ ] `02_tfidf_baseline.ipynb`  
