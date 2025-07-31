@@ -13,8 +13,8 @@ import argparse
 
 # --------------------------------------------------------------------------------------------------------------------------------------------
 # --------------------------------------------------------------------------------------------------------------------------------------------
-# 1. fix_informal_contractions(text: str) -> str
-# Convert variants like im, i m, Im, Dont, don t (which exist in this dataset) → standardized forms (I'm, don't, etc.)
+# 1. fix_informal_contractions
+# Convert variants like im, i m, Im, Dont, don t (which exist in this dataset) to standardized forms (I'm, don't, etc.)
 
 def fix_informal_contractions(text: str) -> str:
     """
@@ -70,27 +70,11 @@ def fix_informal_contractions(text: str) -> str:
     return text
 
 # --------------------------------------------------------------------------------------------------------------------------------------------
+# 2. expand_contractions
+# Use contractions.fix() to turn I'm → I am, don't → do not, etc.
+
 def expand_contractions(text: str) -> str:
-    """
-    Expand canonical apostrophized contractions into their full-word forms,
-    so that downstream tokenization and modeling see consistent vocabulary.
-
-    Specifically handles patterns like:
-      - "don't", "Don't"   → "do not"
-      - "I'm", "i'm"       → "I am"
-      - "they're", "They’re" → "they are"
-      - (and similarly for: you've, he'd, she'd, we'll, won't, etc.)
-
-    We rely on the `contractions` package’s built-in mapping of ~150+ cases
-    to cover nested and edge-case contractions, avoiding manual maintenance.
-
-    Relevance:
-      - **Shallow models** (e.g. TF–IDF + LogisticRegression/SVM) benefit from
-        reduced vocabulary sparsity: "don't" and "do not" become the same tokens.
-      - **Transformer models** (e.g. BERT, DistilBERT) align better with
-        pretraining data (which often uses full forms), improving embedding quality.
-        
-        
+    """        
     Expand contractions into full-word forms for consistent tokenization (e.g. "don't", "Don't" → "do not" etc.)
 
     Relevance:
@@ -105,4 +89,27 @@ def expand_contractions(text: str) -> str:
 
     """
     return contractions.fix(text)
+
+
+# --------------------------------------------------------------------------------------------------------------------------------------------
+# 3. lowercase_text(text: str) -> str
+# Normalize all characters to lowercase.
+
+def lowercase_text(text: str) -> str:
+    """
+    Convert all characters in the input string to lowercase for uniform casing.
+    * Preserves non-letter characters (punctuation, numbers, emojis).
+
+    Relevance:
+      - ✔️ Shallow models: TF–IDF and count-vector features are case-sensitive by default so it reduces sparsity.
+      - ✔️ Transformer models: although subword tokenizers are case-aware,
+        lowercasing can improve consistency when using uncased variants (e.g. `bert-base-uncased`).
+
+    Args:
+        text (str): Input string with mixed casing.
+
+    Returns:
+        str: The same string, fully lowercased.
+    """
+    return text.lower()
 
