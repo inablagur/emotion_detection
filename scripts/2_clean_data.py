@@ -19,12 +19,7 @@ import argparse
 def fix_informal_contractions(text: str) -> str:
     """
     Normalize sloppy/missing-apostrophe contractions into their canonical forms
-    for reliable downstream expansion.
-
-    Specifically handles:
-      - im, i m, Im, I m       → I'm
-      - dont, don t, Dont, Don t → don't
-      - (and similarly for: didnt, ive, wasnt, doesnt, shouldnt, cant, wont, couldnt, wouldn't)
+    for reliable downstream expansion. (e.g. im, i m, Im, I m → I'm etc.)
 
     Relevance:
       - Cleans noisy user text before other preprocessors.
@@ -96,7 +91,7 @@ def expand_contractions(text: str) -> str:
 
 def lowercase_text(text: str) -> str:
     """
-    Convert all characters in the input string to lowercase for uniform casing.
+    Convert all characters in the input string to lowercase for uniform casing (e.g. "Hello World!" → "hello world!" etc.)
     * Preserves non-letter characters (punctuation, numbers, emojis).
 
     Relevance:
@@ -119,7 +114,7 @@ def lowercase_text(text: str) -> str:
 
 def normalize_whitespace(text: str) -> str:
     """
-    Collapse multiple whitespace characters into single spaces and strip edges.
+    Collapse multiple whitespace characters into single spaces and strip edges (e.g. "  leading\nand trailing\t  " → "leading and trailing").
 
     Relevance:        
       - ✔️ Shallow models: collapsing irregular whitespace avoids empty tokens
@@ -135,3 +130,28 @@ def normalize_whitespace(text: str) -> str:
              and no leading/trailing spaces.
     """
     return re.sub(r"\s+", " ", text).strip()      # \s+ matches any run of whitespace (spaces, tabs, newlines)
+
+# --------------------------------------------------------------------------------------------------------------------------------------------
+# 5. normalize_punctuation
+# Replace repeated punctuation sequences (!!!, ..., ???) with a single character (!, ., ?).
+
+def normalize_punctuation(text: str) -> str:
+    """
+    Collapse repeated punctuation and ensure spacing after punctuation marks (e.g. "Wait,what?No way..." → "Wait, what? No way." etc.)
+
+    Relevance:
+      - ✔️ Shallow models: avoids multiple tokens for “!”/“?” sequences and
+        ensures punctuation is separate from words in TF–IDF vectors.
+      - ✔️ Transformer models: aligns input with pretraining text conventions.
+
+    Args:
+        text (str): Input string with arbitrary punctuation.
+
+    Returns:
+        str: Text with repeated punctuation collapsed and a space after each mark.
+    """
+    # 1. Collapse sequences of the same punctuation to a single instance
+    text = re.sub(r'([.!?;,]){2,}', r'\1', text)
+    # 2. Ensure there is a space after punctuation if missing
+    text = re.sub(r'([.!?;,])([^\s])', r'\1 \2', text)
+    return text
