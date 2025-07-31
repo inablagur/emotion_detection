@@ -65,7 +65,6 @@ def fix_informal_contractions(text: str) -> str:
 
     # Apply each pattern in turn
     for pattern, replacement in pre_map.items():
-        # We don’t set IGNORECASE because we explicitly list capitalized forms
         text = re.sub(pattern, replacement, text)
     return text
 
@@ -92,8 +91,8 @@ def expand_contractions(text: str) -> str:
 
 
 # --------------------------------------------------------------------------------------------------------------------------------------------
-# 3. lowercase_text(text: str) -> str
-# Normalize all characters to lowercase.
+# 3. lowercase_text
+# Normalize all characters to lowercase
 
 def lowercase_text(text: str) -> str:
     """
@@ -113,3 +112,26 @@ def lowercase_text(text: str) -> str:
     """
     return text.lower()
 
+
+# --------------------------------------------------------------------------------------------------------------------------------------------
+# 4. normalize_whitespace
+# Collapse runs of whitespace (\s+) to a single space and trim leading/trailing spaces.
+
+def normalize_whitespace(text: str) -> str:
+    """
+    Collapse multiple whitespace characters into single spaces and strip edges.
+
+    Relevance:        
+      - ✔️ Shallow models: collapsing irregular whitespace avoids empty tokens
+        and reduces feature sparsity.
+      - ✔️ Transformer models: ensures clean input for BERT tokenizers,
+        matching pretraining assumptions and preserving sequence length for real content.        
+
+    Args:
+        text (str): Input string potentially containing irregular whitespace.
+
+    Returns:
+        str: Text with all runs of whitespace replaced by a single space,
+             and no leading/trailing spaces.
+    """
+    return re.sub(r"\s+", " ", text).strip()      # \s+ matches any run of whitespace (spaces, tabs, newlines)
