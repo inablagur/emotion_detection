@@ -1,8 +1,8 @@
 # Ignore tasks and status notes
 what to do.md
 
-# Ignore generated CSV splits
-data/*.csv
+# Ignore created data files
+data/*
 
 # keep the folder and its .gitkeep
 !data/.gitkeep
