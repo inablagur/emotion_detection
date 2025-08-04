@@ -162,6 +162,12 @@ def normalize_punctuation(text: str) -> str:
     return text
 
 
+# TODO: Add a wrapping function that combines the single string modules
+# TODO: Test everything
+# TODO: After all tests passed --> Create an argparse interface to run the script from the command line, optionaly entering a file path to a csv file. 
+#       Potentially add another option for people who want to run this script straight from a loaded dataset (e.g. from the Hugging Face datasets library).
+
+
 # --------------------------------------------------------------------------------------------------------------------------------------------
 # ------------------------------------------------------- General DataFrame Functions --------------------------------------------------------
 
