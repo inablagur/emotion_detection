@@ -4,7 +4,7 @@ import pandas as pd
 import re
 import contractions
 import argparse
-
+import pandas as pd
 # --------------------------------------------------------------------------------------------------------------------------------------------
 # --------------------------------------------------------------------------------------------------------------------------------------------
 # Main Clean Function:
@@ -155,3 +155,30 @@ def normalize_punctuation(text: str) -> str:
     # 2. Ensure there is a space after punctuation if missing
     text = re.sub(r'([.!?;,])([^\s])', r'\1 \2', text)
     return text
+
+# --------------------------------------------------------------------------------------------------------------------------------------------
+## 7. drop_invalid_rows
+# Remove rows (from the entire df) where df[text] is null, empty, or only whitespace.
+
+def drop_invalid_rows(df: pd.DataFrame, text_col: str = 'text') -> pd.DataFrame:
+    """
+    Remove rows where the text column is null, empty, or only whitespace.
+    Handles NaN values / Empty strings / strings with only whitespace
+
+    Relevance:
+      - ✔️ Shallow models: avoids zero-vector documents that skew TF–IDF
+      - ✔️ Transformer models: prevents tokenizers from receiving empty inputs,
+
+    Args:
+        df (pd.DataFrame): DataFrame containing a text column.
+        text_col (str): Name of the column to validate and drop if invalid.
+
+    Returns:
+        pd.DataFrame: A new DataFrame with invalid rows removed and index reset.
+    """
+    # Convert to string, strip whitespace, then keep only non-empty entries
+    valid_mask = df[text_col].notna() & df[text_col].astype(str).str.strip().astype(bool)
+    return df.loc[valid_mask].reset_index(drop=True)
+
+
+
