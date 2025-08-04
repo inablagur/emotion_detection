@@ -6,13 +6,18 @@ import contractions
 import argparse
 import pandas as pd
 # --------------------------------------------------------------------------------------------------------------------------------------------
-# --------------------------------------------------------------------------------------------------------------------------------------------
-# Main Clean Function:
+# ----------------------------------------------------------- Main Clean Function ------------------------------------------------------------
 
 
 
 # --------------------------------------------------------------------------------------------------------------------------------------------
 # --------------------------------------------------------------------------------------------------------------------------------------------
+
+
+
+
+# --------------------------------------------------------------------------------------------------------------------------------------------
+# ------------------------------------------------------------------ Modules -----------------------------------------------------------------
 # 1. fix_informal_contractions
 # Convert variants like im, i m, Im, Dont, don t (which exist in this dataset) to standardized forms (I'm, don't, etc.)
 
@@ -156,14 +161,16 @@ def normalize_punctuation(text: str) -> str:
     text = re.sub(r'([.!?;,])([^\s])', r'\1 \2', text)
     return text
 
+
 # --------------------------------------------------------------------------------------------------------------------------------------------
-## 7. drop_invalid_rows
+# ------------------------------------------------------- General DataFrame Functions --------------------------------------------------------
+
+# 7. drop_invalid_rows
 # Remove rows (from the entire df) where df[text] is null, empty, or only whitespace.
 
 def drop_invalid_rows(df: pd.DataFrame, text_col: str = 'text') -> pd.DataFrame:
     """
     Remove rows where the text column is null, empty, or only whitespace.
-    Handles NaN values / Empty strings / strings with only whitespace
 
     Relevance:
       - ✔️ Shallow models: avoids zero-vector documents that skew TF–IDF
@@ -179,6 +186,35 @@ def drop_invalid_rows(df: pd.DataFrame, text_col: str = 'text') -> pd.DataFrame:
     # Convert to string, strip whitespace, then keep only non-empty entries
     valid_mask = df[text_col].notna() & df[text_col].astype(str).str.strip().astype(bool)
     return df.loc[valid_mask].reset_index(drop=True)
+
+
+# --------------------------------------------------------------------------------------------------------------------------------------------
+# 8. drop_by_length
+# Remove rows whose text length is less than `min_len` or greater than `max_len`.
+
+def drop_by_length(df: pd.DataFrame, text_col: str = 'text', min_len: int = 15, max_len: int = 300) -> pd.DataFrame:
+    """
+    Remove rows where the text length is outside [min_len, max_len].
+
+    Relevance:
+      - ✔️ Shallow models: filters out too-short noise and extreme outliers.
+      - ✔️ Transformer models: filters out too-short noise and extreme outliers.
+
+    Args:
+        df (pd.DataFrame): Input DataFrame containing a text column.
+        text_col (str): Name of the column to measure. Defaults to 'text'.
+        min_len (int): Minimum valid character count. Defaults to 15 (as deduced from "notebooks\01_data_exploration.ipynb").
+        max_len (int): Maximum valid character count. Defaults to 300 (as deduced from "notebooks\01_data_exploration.ipynb").
+
+    Returns:
+        pd.DataFrame: A new DataFrame with out-of-range rows removed and index reset.
+    """
+    lengths = df[text_col].astype(str).str.len()
+    mask = lengths.between(min_len, max_len)
+
+    return df.loc[mask].reset_index(drop=True)
+
+
 
 
 
