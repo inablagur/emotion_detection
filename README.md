@@ -22,12 +22,16 @@ We use the **Kaggle “Emotion”** dataset (28 k samples, 6 labels - anger; fea
 emotion_detection/        
 │
 ├── data/                             ← All raw & split datasets
-│   ├── train.csv                     ← Training examples (text + emotion)
-│   ├── validation.csv                ← Validation examples
-│   └── test.csv                      ← Test examples
+│   ├── train.csv                     ← Training examples (text + emotion)                    (Output of `scripts/1_load_data.py`)
+│   ├── validation.csv                ← Validation examples                                   (Output of `scripts/1_load_data.py`)
+│   └── test.csv                      ← Test examples                                         (Output of `scripts/1_load_data.py`)
+│   ├── train_clean.csv               ← Preprocessed Training examples (text + emotion)       (Output of `scripts/2_clean_data.py`)
+│   ├── validation_clean.csv          ← Preprocessed Validation examples                      (Output of `scripts/2_clean_data.py`)
+│   └── test_clean.csv                ← Preprocessed Test examples                            (Output of `scripts/2_clean_data.py`)
 │
 ├── scripts/                          ← Helper scripts for data prep & model runs, executable entry points.
-│   └── load_data.py                  ← Loads HF “emotion” dataset, writes train/val/test CSVs
+│   ├── 1_load_data.py                ← Loads HF “emotion” dataset, writes train/val/test CSVs
+│   └── 2_clean_data.py               ← Preprocesses text for both shallow and transformer models                                        
 │
 ├── notebooks/                        ← Jupyter notebooks, aligned with milestones
 │   ├── 01_data_exploration.ipynb     ← Explore data: counts, lengths, quirks
@@ -45,18 +49,19 @@ emotion_detection/
 ---
 
 ## 🔄 General Pipeline
+(both) **Preprocessing**: lowercase, strip punctuation, expand contractions, pruning.
 
 ### 1️⃣ Shallow Baseline  
-1. **Preprocessing**: lowercase, strip punctuation, optional stop-words  
-2. **Vectorization**: TF–IDF (`TfidfVectorizer(ngram_range=(1,2), max_features=10k)`)  
-3. **Classification**: Logistic Regression (or SVM / Naïve Bayes)  
-4. **Evaluation**: train/dev/test split → accuracy, macro-F1, per-class F1
+1. **Vectorization**: TF–IDF (`TfidfVectorizer(ngram_range=(1,2), max_features=10k)`)  
+2. **Classification**: Logistic Regression (or SVM / Naïve Bayes)  
+
 
 ### 2️⃣ Transformer Fine-Tuning  
 1. **Tokenization**: `AutoTokenizer` (`bert-base-uncased`)  
 2. **Model**: `AutoModelForSequenceClassification` (+ 6-label head)  
 3. **Training**: Hugging Face `Trainer` API  
-4. **Evaluation**: same splits & metrics as baseline
+
+(both) **Evaluation**: train/dev/test split → accuracy, macro-F1, per-class F1
 
 ---
 
@@ -77,7 +82,7 @@ emotion_detection/
      
 2. **Clone the repo**  
    ```bash
-   git clone git@github.com:YOUR_USERNAME/emotion_detection.git
+   git clone git@github.com:<YOUR_USERNAME>/emotion_detection.git
    cd emotion_detection
 
 3. **Install Requirements**  
@@ -86,7 +91,11 @@ emotion_detection/
 
 4. **Prepare the data**  
    ```bash
-   python scripts/load_data.py
+   # Read and save the data
+   python scripts/1_load_data.py
+
+   # Preprocess and save the data
+   python scripts/2_clean_data.py
 
 5. **(To be added)**
     - Model training scripts (TF-IDF, transformer)
@@ -106,7 +115,12 @@ Below is a high-level checklist of our project milestones.
 
 - ⚪️ **Data Gathering & Exploration**  
   - [x] Download & split dataset  
-  - [ ] `01_data_exploration.ipynb` completed
+  - [x] `01_data_exploration.ipynb` completed
+
+- ⚪️ **Data Cleaning & Preprocessing**  
+  - [x] Implement the modules individually and test them one by one
+  - [x] Integrate all individual modules into main clean_df function and test
+  - [x] Integrate into `scripts/2_clean_data.py`
 
 - ⚪️ **Build Simple (Shallow) Models**  
   - [ ] `02_tfidf_baseline.ipynb`  
@@ -123,5 +137,6 @@ Below is a high-level checklist of our project milestones.
   - [ ] `05_explainability.ipynb`
 
 - ⚪️ **Polish & Publish**  
+  - [ ] Ensure persisnence between code and files
   - [ ] Final README updates  
   - [ ] Demo deployment / release tag
