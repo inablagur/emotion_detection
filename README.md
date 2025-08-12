@@ -21,29 +21,33 @@ We use the **Kaggle “Emotion”** dataset (28 k samples, 6 labels - anger; fea
 ```text
 emotion_detection/        
 │
-├── data/                             ← All raw & split datasets
-│   ├── train.csv                     ← Training examples (text + emotion)                    (Output of `scripts/1_load_data.py`)
-│   ├── validation.csv                ← Validation examples                                   (Output of `scripts/1_load_data.py`)
-│   └── test.csv                      ← Test examples                                         (Output of `scripts/1_load_data.py`)
-│   ├── train_clean.csv               ← Preprocessed Training examples (text + emotion)       (Output of `scripts/2_clean_data.py`)
-│   ├── validation_clean.csv          ← Preprocessed Validation examples                      (Output of `scripts/2_clean_data.py`)
-│   └── test_clean.csv                ← Preprocessed Test examples                            (Output of `scripts/2_clean_data.py`)
+├── data/                                               ← All raw & split datasets
+│   ├── train.csv                                       ← Training examples (text + emotion)                    (Output of `scripts/1_load_data.py`)
+│   ├── validation.csv                                  ← Validation examples                                   (Output of `scripts/1_load_data.py`)
+│   └── test.csv                                        ← Test examples                                         (Output of `scripts/1_load_data.py`)
+│   ├── train_clean.csv                                 ← Preprocessed Training examples (text + emotion)       (Output of `scripts/2_clean_data.py`)
+│   ├── validation_clean.csv                            ← Preprocessed Validation examples                      (Output of `scripts/2_clean_data.py`)
+│   └── test_clean.csv                                  ← Preprocessed Test examples                            (Output of `scripts/2_clean_data.py`)
 │
-├── scripts/                          ← Helper scripts for data prep & model runs, executable entry points.
-│   ├── 1_load_data.py                ← Loads HF “emotion” dataset, writes train/val/test CSVs
-│   └── 2_clean_data.py               ← Preprocesses text for both shallow and transformer models                                        
+├── scripts/                                            ← Helper scripts for data prep & model runs, executable entry points.
+│   ├── 1_load_data.py                                  ← Loads HF “emotion” dataset, writes train/val/test CSVs
+│   └── 2_clean_data.py                                 ← Preprocesses text for both shallow and transformer models     
+│   └── 3_train_shallow.py                              ← Train shallow classifiers, save best models & reports
 │
-├── notebooks/                        ← Jupyter notebooks, aligned with milestones
-│   ├── 01_data_exploration.ipynb     ← Explore data: counts, lengths, quirks
-│   ├── 02_tfidf_baseline.ipynb       ← Baseline models with TF–IDF + classifiers
-│   ├── 03_transformer_finetune.ipynb ← Fine-tune BERT & DistilBERT
-│   └── 04_compare_and_plot.ipynb     ← Compare metrics, times, and produce visuals
+├── notebooks/                                          ← Jupyter notebooks, aligned with milestones
+│   ├── 01_data_exploration.ipynb                       ← Explore data: counts, lengths, quirks
+│   ├── 02_shallow_models_comparison.ipynb              ← Visualize & compare shallow models (metrics, confusion matrices, top terms)
+│   ├── 03_transformer_finetune.ipynb                   ← Fine-tune transformer models (BERT, DistilBERT) on the dataset
+│   ├── 03b_transformer_models_comparison.ipynb         ← Visualize & compare transformer models (metrics, confusion matrices, key examples)
+│   └── 04_compare_shallow_vs_transformers.ipynb        ← Compare best shallow vs transformer models (performance, efficiency, trade-offs)
+│                                                       
+├── reports/                                            ← JSON reports and interpretation files for each trained model
 │
-├── models/                           ← Saved model checkpoints (populates later)
+├── models/                                             ← Saved model checkpoints (populates later)
 │
-├── README.md                         ← High-level overview, setup, and workflow
-├── requirements.txt                  ← Pinned dependencies (Python 3.10)
-└── .gitignore                        ← Files/folders to omit from Git
+├── README.md                                           ← High-level overview, setup, and workflow
+├── requirements.txt                                    ← Pinned dependencies (Python 3.10)
+└── .gitignore                                          ← Files/folders to omit from Git
 
 ```
 ---
