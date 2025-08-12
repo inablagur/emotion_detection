@@ -3,9 +3,14 @@ what to do.md
 
 # Ignore created data files
 data/*
-
-# keep the folder and its .gitkeep
 !data/.gitkeep
+
+# Ignore saved models and reports
+models/*
+!models/.gitkeep
+
+reports/*
+!reports/.gitkeep
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
