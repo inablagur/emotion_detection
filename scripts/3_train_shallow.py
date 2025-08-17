@@ -218,24 +218,16 @@ def compute_metrics(y_true, y_pred, labels_order):
 
 # --------------------------------------------------------------------------------------------------------------------------------------------
 # --------------------------------------------------------- Randomized search spaces ---------------------------------------------------------
-def param_distributions_for(model_name: str, class_weight_toggle: bool):
+def get_param_disributions(model_name: str):
     """
-    Defines the hyperparameter search space for a given shallow model.
-
-    The distributions are designed for RandomizedSearchCV and cover
-    reasonable ranges for each model type.
+    Returns the hyperparameter search space for a given shallow model.
+    
+    The returned dictionary is designed to be passed into RandomizedSearchCV's `param_distributions`
+    argument. It defines the search space for each model type, and cover reasonable ranges for each hyperparameter.
 
     Args:
-        model_name (str): The short name of the model. One of:
-            - "lr"   → Logistic Regression (multinomial, L2): Works well with high-dimensional sparse text, produces probabilistic outputs, interpretable via coefficients, fast to train. Handles multiclass directly and supports class weighting.
-            - "lsvm" → LinearSVC (hinge loss, one-vs-rest): very strong baseline for text classification; handles high-dimensional sparse features efficiently; interpretable like LR.
-            - "cnb"  → Complement Naive Bayes: Probabilistic model tailored for text; uses feature stats from all other classes to stabilize estimates for rare classes; extremely fast and robust to imbalance in sparse data.
-            
-        class_weight_toggle (bool): If True, include 'class_weight'
-            in the search space for LR and LinearSVC, trying both None and 'balanced' options. This can help with imbalanced data.  
-            
-            #TODO: Add explanation to Why CNB doesn't use this options (It doesn’t have a class_weight parameter because reweighting classes isn't part of its math. 
-            Instead, it naturally incorporates class frequency into priors (P(class)) and mitigates imbalance through its complement estimation (training each class against all others) and smoothing (alpha).) 
+        model_name (str): The short name of the model. 
+            Supported values: "lr" (Logistic Regression), "svc" (LinearSVC), "cnb" (ComplementNB).
 
     Returns:
         dict: Parameter distribution mapping for use in RandomizedSearchCV.
@@ -245,15 +237,15 @@ def param_distributions_for(model_name: str, class_weight_toggle: bool):
     # Logistic regression model:
     if model_name == "lr":
         return {
-            "clf__C": loguniform(1e-2, 1e2),                                                        # C controls L2 strength
-            **({"clf__class_weight": [None, "balanced"]} if class_weight_toggle else {})            # class_weight only if requested; helpful if imbalance shows up.
+            "clf__C": loguniform(1e-2, 1e2),            # C controls L2 strength
+            "clf__class_weight": [None, "balanced"],    # "calanced" handles class imbalance.
         }
     
     # SVM model:
     if model_name == "lsvm":
         return {
             "clf__C": loguniform(1e-2, 1e2),                                                        # C controls regularization strength
-            **({"clf__class_weight": [None, "balanced"]} if class_weight_toggle else {})            # class_weight only if requested; helpful if imbalance shows up.
+            "clf__class_weight": [None, "balanced"],    # "calanced" handles class imbalance.
         }
         
     # Complement Naive Bayes model:
@@ -291,8 +283,7 @@ if __name__ == "__main__":
     parser.add_argument("--n-iter", type=int, default=20, help="RandomizedSearchCV iterations per model.")
     parser.add_argument("--cv", type=int, default=3, help="Cross-validation folds in RandomizedSearchCV.")
     parser.add_argument("--random-seed", type=int, default=42, help="Random seed for reproducibility.")
-    parser.add_argument("--class-weight-toggle", action="store_true", help="Include class_weight in LR/LinearSVC search (None vs 'balanced').")
-
+    
     # Output
     parser.add_argument("--models-dir", type=Path, default=Path("models"), help="Directory to write serialized pipelines.")
     parser.add_argument("--reports-dir", type=Path, default=Path("reports"), help="Directory to write JSON reports / top-terms.")
