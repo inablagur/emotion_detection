@@ -516,29 +516,31 @@ if __name__ == "__main__":
     
 # ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------    
 # ------------------------------------------------------------------------------------------ QUESTIONS FOR NEXT SESSION ------------------------------------------------------------------------------------------
-"""    
-* I got this warning: "C:\Users\Inbal\anaconda3\envs\env_emotion_detection\lib\site-packages\sklearn\linear_model\_sag.py:348: ConvergenceWarning: The max_iter was reached which means the coef_ did not converge"
+# """    
+# * I got this warning: "C:\Users\Inbal\anaconda3\envs\env_emotion_detection\lib\site-packages\sklearn\linear_model\_sag.py:348: ConvergenceWarning: The max_iter was reached which means the coef_ did not converge"
 
-* I also got this warning: "C:\Users\Inbal\anaconda3\envs\env_emotion_detection\lib\site-packages\sklearn\svm\_base.py:1250: ConvergenceWarning: Liblinear failed to converge, increase the number of iterations."
+# * I also got this warning: "C:\Users\Inbal\anaconda3\envs\env_emotion_detection\lib\site-packages\sklearn\svm\_base.py:1250: ConvergenceWarning: Liblinear failed to converge, increase the number of iterations."
 
-* I'm not sure I understood: Does the number for --ngram-max means all the number of grams from 1 to the chosen number include? Meaning If I chose --ngram-max=5 it will go through all 1, 2, 3, 4, 5 grams?
+# * I'm not sure I understood: Does the number for --ngram-max means all the number of grams from 1 to the chosen number include? Meaning If I chose --ngram-max=5 it will go through all 1, 2, 3, 4, 5 grams?
 
-* Why in --max_features :     parser.add_argument("--max-features", type=int, default=50_000, help="Cap TF-IDF vocabulary size (most frequent features kept).")
+# * Why in --max_features :     parser.add_argument("--max-features", type=int, default=50_000, help="Cap TF-IDF vocabulary size (most frequent features kept).")
 
-* default is written like this: 50_000 and not like this 50000? Does it read it like that? I don't understand.
+# * default is written like this: 50_000 and not like this 50000? Does it read it like that? I don't understand.
 
-* I don't understand what min-df does or referes to
+# * I don't understand what min-df does or referes to
 
-* I don't understand what --no-sublinear-tf means if disabled or enabled, what does it affect?
-"""
+# * I don't understand what --no-sublinear-tf means if disabled or enabled, what does it affect?
+
+# * What is args.model_dir? I don't seem to find it
+# """
 
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------    
 # ------------------------------------------------------------------------------------------ TODO's ------------------------------------------------------------------------------------------
 """
-1. Add models/. and reports/. files to .gitignore so they won't be pushed to the repo.
-2. Answer the questions
+Add models/. and reports/. files to .gitignore so they won't be pushed to the repo. -TODO: Make sure it happend and delete this note
+1. Answer the questions
 3. Fix the warnings
 4. Check where is the time duration and what does it time (the training? Maybe I also want to time an answer)
-5. In the notebook part - Compare between the models based on several parameters, including the complexities
+5. In the notebook part - Compare between the models based on several parameters, including the complexities TODO: Make sure it happend and delete this note
 """
