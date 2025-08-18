@@ -87,15 +87,12 @@ def timer():
     return lambda: time.perf_counter() - start
 
 def latency_ms_per_sample(model, X):
-    # TODO: Understand exacatly what it does
     """
     Measures the average prediction latency per sample in milliseconds.
-
-    Runs a short warm-up prediction to avoid one-time setup costs,
-    then predicts on the full dataset and calculates average latency.
+    *Relevant for inference speed measurement and comparison
 
     Args:
-        model (Pipeline): A trained scikit-learn pipeline with a `.predict()` method.
+        model (Pipeline): A trained pipeline with a `.predict()` method.
         X (array-like or Series): Input samples to predict.
 
     Returns:
@@ -171,6 +168,7 @@ def extract_top_terms_txt(pipeline: Pipeline, labels_order, k=20) -> str:
     Returns:
         str: A formatted multi-line string with top terms per class.
     """
+    # TODO: What does it mean vec: TfidfVectorizer = pipeline.named_steps["tfidf"]? What is the vec variable? Why is it needed? which of them is the variable? I don't understand the syntax here.
     vec: TfidfVectorizer = pipeline.named_steps["tfidf"]
     clf = pipeline.named_steps["clf"]
     if not hasattr(clf, "coef_"):
@@ -218,7 +216,7 @@ def compute_metrics(y_true, y_pred, labels_order):
 
 # --------------------------------------------------------------------------------------------------------------------------------------------
 # --------------------------------------------------------- Randomized search spaces ---------------------------------------------------------
-def get_param_disributions(model_name: str):
+def get_param_distributions(model_name: str):
     """
     Returns the hyperparameter search space for a given shallow model.
     
@@ -231,28 +229,45 @@ def get_param_disributions(model_name: str):
 
     Returns:
         dict: Parameter distribution mapping for use in RandomizedSearchCV.
-              Keys match the pipeline parameter names (e.g., 'clf__C').
+              *Keys match the pipeline parameter names (e.g., 'clf__C').
     """
 
     # Logistic regression model:
     if model_name == "lr":
         return {
-            "clf__C": loguniform(1e-2, 1e2),            # C controls L2 strength
-            "clf__class_weight": [None, "balanced"],    # "calanced" handles class imbalance.
+            # "clf__C": loguniform(1e-2, 1e2),            # Regularization strength
+            # "clf__class_weight": [None, "balanced"],    # "Balanced" handles class imbalance.
+            # "clf__tol": loguniform(1e-4, 3e-3),         # Stopping tolerance
+            # "clf__max_iter": [10000, 20000, 40000],     # Increase number of iterations to avoid convergence warning
+
+            # "clf__C": loguniform(1e-3, 1e1),            # C controls L2 strength# narrower C → faster, fewer non-converged fits
+            # "clf__class_weight": [None, "balanced"],    # "Balanced" handles class imbalance.
+            # "clf__tol": loguniform(1e-4, 3e-3),         # Stopping tolerance
+            # "clf__max_iter": [10000, 20000],      # Increase number of iterations to avoid convergence warning
+
+            "clf__estimator__C": loguniform(1e-3, 1e1),           # wide enough to find strong fits
+            "clf__estimator__class_weight": [None, "balanced"],   # let CV decide
+            "clf__estimator__tol": loguniform(1e-4, 3e-3),        # not too loose
+            "clf__estimator__max_iter": [10000, 20000, 30000],    # give tough classes room
         }
     
     # SVM model:
     if model_name == "lsvm":
         return {
-            "clf__C": loguniform(1e-2, 1e2),                                                        # C controls regularization strength
-            "clf__class_weight": [None, "balanced"],    # "calanced" handles class imbalance.
+            "clf__C": loguniform(1e-3, 3e-1),           # Regularization strength
+            "clf__class_weight": [None, "balanced"],    # "Balanced" handles class imbalance.
+            "clf__tol": loguniform(1e-3, 5e-3),         # Stopping tolerance
+            "clf__max_iter": [10000, 20000, 40000],     # Increase number of iterations to avoid convergence warning
+
         }
         
     # Complement Naive Bayes model:
+    # TODO: Question: Why doesn't cnb have max_iter? It doesn't need to? (Keep in mind it does not contain runtime warnings at the moment)
+    # TODO: Should i pass the max_iter as an argument?
     if model_name == "cnb":
-        # TODO: Is the default balanced or imbalanced? What does it take into account? 
+        # CNB handles class imbalance internally
         return {
-            "clf__alpha": loguniform(1e-3, 10)                                                      # alpha controls smoothing;
+            "clf__alpha": loguniform(1e-3, 10)          # alpha controls smoothing;
         }
     raise ValueError(f"Unknown model '{model_name}'")
 
@@ -260,6 +275,8 @@ def get_param_disributions(model_name: str):
 # ------------------------------------------------------------------ Main --------------------------------------------------------------------
 
 if __name__ == "__main__":
+    
+    # Create parser:
     parser = argparse.ArgumentParser(
         description="Train shallow TF-IDF baselines (LR, LinearSVC, ComplementNB) with RandomizedSearchCV."
     )
@@ -321,22 +338,45 @@ if __name__ == "__main__":
         sublinear_tf=not args.no_sublinear_tf
     )
 
+
     # Model factory
     def make_pipeline(model_name: str) -> Pipeline:
+        # if model_name == "lr":
+        #     clf = LogisticRegression(
+        #         solver="saga",
+        #         penalty="l2",
+        #         multi_class="ovr",      #TODO: Testing it as an extra to the pipeline, to check if it works faster, with similar (or better) results
+        #         # max_iter=20000,         # Set default value
+        #         max_iter=10000,         # Set default value
+        #         tol=1e-3,
+        #         n_jobs=-1
+        #     )
         if model_name == "lr":
-            clf = LogisticRegression(
+            from sklearn.multiclass import OneVsRestClassifier
+            
+            base_lr = LogisticRegression(
                 solver="saga",
                 penalty="l2",
-                max_iter=5000,
+                C=1.0,
+                # max_iter=20000,         # Set default value
+                max_iter=10000,         # Set default value
                 tol=1e-3,
-                n_jobs=-1
+                n_jobs=-1,
+                random_state=args.random_seed
             )
+            clf = OneVsRestClassifier(base_lr, n_jobs=-1)  # Use OneVsRestClassifier to handle multi-class with LR
+
+
         elif model_name == "lsvm":
             clf = LinearSVC(loss="hinge")
+
+
         elif model_name == "cnb":
             clf = ComplementNB()
+
         else:
             raise ValueError(model_name)
+
         return Pipeline([("tfidf", tfidf), ("clf", clf)])
 
     # Train & evaluate each requested model on validation
@@ -345,17 +385,11 @@ if __name__ == "__main__":
 
     for model_name in args.models:
         pipe = make_pipeline(model_name)
-        param_distributions = param_distributions_for(model_name, args.class_weight_toggle)
- 
-        # TODO: Testing this part   
-        # Also let the search try a few TF–IDF settings (kept small to control runtime)
-        param_distributions.update({
-            "tfidf__ngram_range": [(1, 1), (1, 2), (1, 3)],
-            "tfidf__max_features": [20_000, 50_000, 80_000],
-            "tfidf__min_df": [1, 2, 3],
-            })
-        # TODO: End of testing
+        param_distributions = get_param_distributions(model_name)
 
+        from sklearn.model_selection import StratifiedKFold
+        args.cv = StratifiedKFold(n_splits=args.cv, shuffle=True, random_state=args.random_seed) # TODO: Addition in testintg
+        
         search = RandomizedSearchCV(
             estimator=pipe,
             param_distributions=param_distributions,
@@ -365,25 +399,28 @@ if __name__ == "__main__":
             n_jobs=-1,
             random_state=args.random_seed,
             verbose=1
+            # refit=True, verbose=0
         )
 
         t = timer()
         search.fit(Xtr, ytr)
         train_time = t()
 
-        best: Pipeline = search.best_estimator_
+        best: Pipeline = search.best_estimator_ # Find the best pipeline for the specific model type   #TODO: Same note as for the val: tfidf - What does it mean when it's written like that? Why is it written like that?
 
         # Validation metrics + latency
         yva_pred = best.predict(Xva)
         metrics_va = compute_metrics(yva, yva_pred, labels_order)
         ms_per_sample = latency_ms_per_sample(best, Xva)
 
+        
         # Save pipeline immediately
         model_fname = {
             "lr": "shallow_lr.pkl",
             "lsvm": "shallow_lsvm.pkl",
             "cnb": "shallow_cnb.pkl"
         }[model_name]
+        
         model_path = args.models_dir / model_fname
         joblib.dump(best, model_path)
         size_mb = model_file_size_mb(model_path)
@@ -441,9 +478,9 @@ if __name__ == "__main__":
         m = item[1]
         return (m["macro_f1"], m["accuracy"])
 
-    winner_name, _ = sorted(val_summaries.items(), key=sort_key, reverse=True)[0]
+    winner_name, _ = sorted(val_summaries.items(), key=sort_key, reverse=True)[0]  
 
-    # Retrain winner on train+validation, evaluate on test
+    # Retrain winner on train + validation, evaluate on test
     winner_pipe = make_pipeline(winner_name)
     # Use the best params found on validation search for the winner
     # Reload from saved best pipeline to preserve exact params
@@ -452,10 +489,11 @@ if __name__ == "__main__":
         "lsvm": args.models_dir / "shallow_lsvm.pkl",
         "cnb": args.models_dir / "shallow_cnb.pkl"
     }[winner_name]
+    
     winner_best: Pipeline = joblib.load(winner_best_path)
 
-    # Refit on train+valid to use all available labeled data before testing
-    Xtrva = pd.concat([Xtr, Xva], ignore_index=True)
+    # Refit on train + valid to use all available labeled data before testing
+    Xtrva = pd.concat([Xtr, Xva], ignore_index=True)  # TODO: Maybe change this shortened name to somtehing that goes better with python conventions?
     ytrva = pd.concat([ytr, yva], ignore_index=True)
 
     t = timer()
@@ -465,6 +503,7 @@ if __name__ == "__main__":
     yte_pred = winner_best.predict(Xte)
     metrics_te = compute_metrics(yte, yte_pred, labels_order)
     ms_per_sample_test = latency_ms_per_sample(winner_best, Xte)
+    size_mb_test = model_file_size_mb(winner_best_path)
 
     # Save a convenience copy for the winner
     joblib.dump(winner_best, args.models_dir / "shallow_winner.pkl")
@@ -490,6 +529,7 @@ if __name__ == "__main__":
         "metrics": {"split": "test", **metrics_te},
         "timing_sec": {"train": round(train_time, 4)},
         "latency_ms_per_sample": round(ms_per_sample_test, 4),
+        "model_size_mb": size_mb_test,
     }
     save_json(args.reports_dir / "shallow_winner_test.json", winner_report)
 
@@ -502,34 +542,38 @@ if __name__ == "__main__":
     
     
         
-    # TODO: Make sure, after finalizing the notebook, that I've added explenation regarding the None and balanced options to deal with the impalanced classes. It explains why the "macro F1" ensures in the actual comparison that the winning model makes good result for each class individually and not just in total, thus deals with the case of bias because of imalanced dataset that is not taken care of
+
     
     
 # ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------    
 # ------------------------------------------------------------------------------------------ QUESTIONS FOR NEXT SESSION ------------------------------------------------------------------------------------------
-"""    
-* I got this warning: "C:\Users\Inbal\anaconda3\envs\env_emotion_detection\lib\site-packages\sklearn\linear_model\_sag.py:348: ConvergenceWarning: The max_iter was reached which means the coef_ did not converge"
+# """    
+# * I got this warning: "C:\Users\Inbal\anaconda3\envs\env_emotion_detection\lib\site-packages\sklearn\linear_model\_sag.py:348: ConvergenceWarning: The max_iter was reached which means the coef_ did not converge"
 
-* I also got this warning: "C:\Users\Inbal\anaconda3\envs\env_emotion_detection\lib\site-packages\sklearn\svm\_base.py:1250: ConvergenceWarning: Liblinear failed to converge, increase the number of iterations."
+# * I also got this warning: "C:\Users\Inbal\anaconda3\envs\env_emotion_detection\lib\site-packages\sklearn\svm\_base.py:1250: ConvergenceWarning: Liblinear failed to converge, increase the number of iterations."
 
-* I'm not sure I understood: Does the number for --ngram-max means all the number of grams from 1 to the chosen number include? Meaning If I chose --ngram-max=5 it will go through all 1, 2, 3, 4, 5 grams?
+# * I'm not sure I understood: Does the number for --ngram-max means all the number of grams from 1 to the chosen number include? Meaning If I chose --ngram-max=5 it will go through all 1, 2, 3, 4, 5 grams?
 
-* Why in --max_features :     parser.add_argument("--max-features", type=int, default=50_000, help="Cap TF-IDF vocabulary size (most frequent features kept).")
+# * Why in --max_features :     parser.add_argument("--max-features", type=int, default=50_000, help="Cap TF-IDF vocabulary size (most frequent features kept).")
 
-* default is written like this: 50_000 and not like this 50000? Does it read it like that? I don't understand.
+# * default is written like this: 50_000 and not like this 50000? Does it read it like that? I don't understand.
 
-* I don't understand what min-df does or referes to
+# * I don't understand what min-df does or referes to
 
-* I don't understand what --no-sublinear-tf means if disabled or enabled, what does it affect?
-"""
+# * I don't understand what --no-sublinear-tf means if disabled or enabled, what does it affect?
+
+# * What is args.model_dir? I don't seem to find it
+
+# * How do I debug to track what the code is doing?
+
+# * Does the code also evaluates the test set? if so when? and with which models?
+# """
 
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------    
 # ------------------------------------------------------------------------------------------ TODO's ------------------------------------------------------------------------------------------
-"""
-1. Add models/. and reports/. files to .gitignore so they won't be pushed to the repo.
-2. Answer the questions
-3. Fix the warnings
-4. Check where is the time duration and what does it time (the training? Maybe I also want to time an answer)
-5. In the notebook part - Compare between the models based on several parameters, including the complexities
-"""
+# """
+# 1. Answer the questions
+# 2. Fix the warnings
+# 3. In the notebook part - Compare between the models based on several parameters, including the complexities
+#    Keep in mind that the current winner in this script is selected based on the macro-F1 score, with accuracy as a tie-braker accuracy.
