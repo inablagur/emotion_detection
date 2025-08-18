@@ -474,6 +474,7 @@ if __name__ == "__main__":
     yte_pred = winner_best.predict(Xte)
     metrics_te = compute_metrics(yte, yte_pred, labels_order)
     ms_per_sample_test = latency_ms_per_sample(winner_best, Xte)
+    size_mb_test = model_file_size_mb(winner_best_path)
 
     # Save a convenience copy for the winner
     joblib.dump(winner_best, args.models_dir / "shallow_winner.pkl")
@@ -499,6 +500,7 @@ if __name__ == "__main__":
         "metrics": {"split": "test", **metrics_te},
         "timing_sec": {"train": round(train_time, 4)},
         "latency_ms_per_sample": round(ms_per_sample_test, 4),
+        "model_size_mb": size_mb_test,
     }
     save_json(args.reports_dir / "shallow_winner_test.json", winner_report)
 
