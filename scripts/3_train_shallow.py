@@ -168,6 +168,7 @@ def extract_top_terms_txt(pipeline: Pipeline, labels_order, k=20) -> str:
     Returns:
         str: A formatted multi-line string with top terms per class.
     """
+    # TODO: What does it mean vec: TfidfVectorizer = pipeline.named_steps["tfidf"]? What is the vec variable? Why is it needed? which of them is the variable? I don't understand the syntax here.
     vec: TfidfVectorizer = pipeline.named_steps["tfidf"]
     clf = pipeline.named_steps["clf"]
     if not hasattr(clf, "coef_"):
@@ -377,7 +378,7 @@ if __name__ == "__main__":
         search.fit(Xtr, ytr)
         train_time = t()
 
-        best: Pipeline = search.best_estimator_
+        best: Pipeline = search.best_estimator_ # Find the best pipeline for the specific model type   #TODO: Same note as for the val: tfidf - What does it mean when it's written like that? Why is it written like that?
 
         # Validation metrics + latency
         yva_pred = best.predict(Xva)
@@ -460,8 +461,8 @@ if __name__ == "__main__":
     }[winner_name]
     winner_best: Pipeline = joblib.load(winner_best_path)
 
-    # Refit on train+valid to use all available labeled data before testing
-    Xtrva = pd.concat([Xtr, Xva], ignore_index=True)
+    # Refit on train + valid to use all available labeled data before testing
+    Xtrva = pd.concat([Xtr, Xva], ignore_index=True)  # TODO: Maybe change this shortened name to somtehing that goes better with python conventions?
     ytrva = pd.concat([ytr, yva], ignore_index=True)
 
     t = timer()
@@ -536,10 +537,8 @@ if __name__ == "__main__":
 
 # ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------    
 # ------------------------------------------------------------------------------------------ TODO's ------------------------------------------------------------------------------------------
-"""
-Add models/. and reports/. files to .gitignore so they won't be pushed to the repo. -TODO: Make sure it happend and delete this note
-1. Answer the questions
-3. Fix the warnings
-4. Check where is the time duration and what does it time (the training? Maybe I also want to time an answer)
-5. In the notebook part - Compare between the models based on several parameters, including the complexities TODO: Make sure it happend and delete this note
-"""
+# """
+# 1. Answer the questions
+# 2. Fix the warnings
+# 3. In the notebook part - Compare between the models based on several parameters, including the complexities
+#    Keep in mind that the current winner in this script is selected based on the macro-F1 score, with accuracy as a tie-braker accuracy.
