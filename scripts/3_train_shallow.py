@@ -216,18 +216,19 @@ def compute_metrics(y_true, y_pred, labels_order):
 
 # --------------------------------------------------------------------------------------------------------------------------------------------
 # --------------------------------------------------------- Randomized search spaces ---------------------------------------------------------
-def param_distributions_for(model_name: str, class_weight_toggle: bool):
+def get_param_distributions(model_name: str, class_weight_toggle: bool):
     """
-    Defines the hyperparameter search space for a given shallow model.
+    This funcion defines the hyperparameter search space for a given shallow model.
 
-    The distributions are designed for RandomizedSearchCV and cover
-    reasonable ranges for each model type.
+    The returned dictionary is designed to be passed into RandomizedSearchCV's `param_distributions`
+    argument. It defines the search space for each model type.
 
     Args:
-        model_name (str): The short name of the model. One of:
+        model_name (str): The short name of the model
             - "lr"   → Logistic Regression (multinomial, L2): Works well with high-dimensional sparse text, produces probabilistic outputs, interpretable via coefficients, fast to train. Handles multiclass directly and supports class weighting.
             - "lsvm" → LinearSVC (hinge loss, one-vs-rest): very strong baseline for text classification; handles high-dimensional sparse features efficiently; interpretable like LR.
             - "cnb"  → Complement Naive Bayes: Probabilistic model tailored for text; uses feature stats from all other classes to stabilize estimates for rare classes; extremely fast and robust to imbalance in sparse data.
+            #TODO: Add this notes for each model where it belongs and relevant, which I don't think is in thisfunctions
             
         class_weight_toggle (bool): If True, include 'class_weight'
             in the search space for LR and LinearSVC, trying both None and 'balanced' options. This can help with imbalanced data.  
@@ -237,7 +238,7 @@ def param_distributions_for(model_name: str, class_weight_toggle: bool):
 
     Returns:
         dict: Parameter distribution mapping for use in RandomizedSearchCV.
-              Keys match the pipeline parameter names (e.g., 'clf__C').
+              *Keys match the pipeline parameter names (e.g., 'clf__C').
     """
 
     # Logistic regression model:
@@ -352,16 +353,7 @@ if __name__ == "__main__":
 
     for model_name in args.models:
         pipe = make_pipeline(model_name)
-        param_distributions = param_distributions_for(model_name, args.class_weight_toggle)
- 
-        # TODO: Testing this part   
-        # Also let the search try a few TF–IDF settings (kept small to control runtime)
-        param_distributions.update({
-            "tfidf__ngram_range": [(1, 1), (1, 2), (1, 3)],
-            "tfidf__max_features": [20_000, 50_000, 80_000],
-            "tfidf__min_df": [1, 2, 3],
-            })
-        # TODO: End of testing
+        param_distributions = get_param_distributions(model_name, args.class_weight_toggle)
 
         search = RandomizedSearchCV(
             estimator=pipe,
