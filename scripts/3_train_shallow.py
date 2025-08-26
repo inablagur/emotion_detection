@@ -216,16 +216,25 @@ def compute_metrics(y_true, y_pred, labels_order):
 
 # --------------------------------------------------------------------------------------------------------------------------------------------
 # --------------------------------------------------------- Randomized search spaces ---------------------------------------------------------
-def get_param_distributions(model_name: str):
+def get_param_distributions(model_name: str, class_weight_toggle: bool):
     """
-    Returns the hyperparameter search space for a given shallow model.
-    
+    This funcion defines the hyperparameter search space for a given shallow model.
+
     The returned dictionary is designed to be passed into RandomizedSearchCV's `param_distributions`
-    argument. It defines the search space for each model type, and cover reasonable ranges for each hyperparameter.
+    argument. It defines the search space for each model type.
 
     Args:
-        model_name (str): The short name of the model. 
-            Supported values: "lr" (Logistic Regression), "svc" (LinearSVC), "cnb" (ComplementNB).
+        model_name (str): The short name of the model
+            - "lr"   → Logistic Regression (multinomial, L2): Works well with high-dimensional sparse text, produces probabilistic outputs, interpretable via coefficients, fast to train. Handles multiclass directly and supports class weighting.
+            - "lsvm" → LinearSVC (hinge loss, one-vs-rest): very strong baseline for text classification; handles high-dimensional sparse features efficiently; interpretable like LR.
+            - "cnb"  → Complement Naive Bayes: Probabilistic model tailored for text; uses feature stats from all other classes to stabilize estimates for rare classes; extremely fast and robust to imbalance in sparse data.
+            #TODO: Add this notes for each model where it belongs and relevant, which I don't think is in thisfunctions
+            
+        class_weight_toggle (bool): If True, include 'class_weight'
+            in the search space for LR and LinearSVC, trying both None and 'balanced' options. This can help with imbalanced data.  
+            
+            #TODO: Add explanation to Why CNB doesn't use this options (It doesn’t have a class_weight parameter because reweighting classes isn't part of its math. 
+            Instead, it naturally incorporates class frequency into priors (P(class)) and mitigates imbalance through its complement estimation (training each class against all others) and smoothing (alpha).) 
 
     Returns:
         dict: Parameter distribution mapping for use in RandomizedSearchCV.
@@ -385,7 +394,7 @@ if __name__ == "__main__":
 
     for model_name in args.models:
         pipe = make_pipeline(model_name)
-        param_distributions = get_param_distributions(model_name)
+        param_distributions = get_param_distributions(model_name, args.class_weight_toggle)
 
         from sklearn.model_selection import StratifiedKFold
         args.cv = StratifiedKFold(n_splits=args.cv, shuffle=True, random_state=args.random_seed) # TODO: Addition in testintg
@@ -542,7 +551,7 @@ if __name__ == "__main__":
     
     
         
-
+    # TODO: Make sure to add the explanation that because "macro F1" ensures in the actual comparison that the winning model makes good result for each class individually and not just in total, thus deals with the case of bias because of imalanced dataset that is not taken care of
     
     
 # ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------    
@@ -563,10 +572,6 @@ if __name__ == "__main__":
 # * I don't understand what --no-sublinear-tf means if disabled or enabled, what does it affect?
 
 # * What is args.model_dir? I don't seem to find it
-
-# * How do I debug to track what the code is doing?
-
-# * Does the code also evaluates the test set? if so when? and with which models?
 # """
 
 
