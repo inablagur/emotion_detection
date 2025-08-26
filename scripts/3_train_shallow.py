@@ -257,7 +257,7 @@ def get_param_distributions(model_name: str, class_weight_toggle: bool):
         
     # Complement Naive Bayes model:
     if model_name == "cnb":
-        # TODO: Is the default balanced or imbalanced? What does it take into account? 
+        # CNB handles class imbalance internally
         return {
             "clf__alpha": loguniform(1e-3, 10)                                                      # alpha controls smoothing;
         }
@@ -267,6 +267,8 @@ def get_param_distributions(model_name: str, class_weight_toggle: bool):
 # ------------------------------------------------------------------ Main --------------------------------------------------------------------
 
 if __name__ == "__main__":
+    
+    # Create parser:
     parser = argparse.ArgumentParser(
         description="Train shallow TF-IDF baselines (LR, LinearSVC, ComplementNB) with RandomizedSearchCV."
     )
@@ -383,6 +385,7 @@ if __name__ == "__main__":
             "lsvm": "shallow_lsvm.pkl",
             "cnb": "shallow_cnb.pkl"
         }[model_name]
+        
         model_path = args.models_dir / model_fname
         joblib.dump(best, model_path)
         size_mb = model_file_size_mb(model_path)
@@ -442,7 +445,7 @@ if __name__ == "__main__":
 
     winner_name, _ = sorted(val_summaries.items(), key=sort_key, reverse=True)[0]
 
-    # Retrain winner on train+validation, evaluate on test
+    # Retrain winner on train + validation, evaluate on test
     winner_pipe = make_pipeline(winner_name)
     # Use the best params found on validation search for the winner
     # Reload from saved best pipeline to preserve exact params
@@ -503,7 +506,7 @@ if __name__ == "__main__":
     
     
         
-    # TODO: Make sure, after finalizing the notebook, that I've added explenation regarding the None and balanced options to deal with the impalanced classes. It explains why the "macro F1" ensures in the actual comparison that the winning model makes good result for each class individually and not just in total, thus deals with the case of bias because of imalanced dataset that is not taken care of
+    # TODO: Make sure to add the explanation that because "macro F1" ensures in the actual comparison that the winning model makes good result for each class individually and not just in total, thus deals with the case of bias because of imalanced dataset that is not taken care of
     
     
 # ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------    
