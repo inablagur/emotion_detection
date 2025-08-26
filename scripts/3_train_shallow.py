@@ -87,15 +87,12 @@ def timer():
     return lambda: time.perf_counter() - start
 
 def latency_ms_per_sample(model, X):
-    # TODO: Understand exacatly what it does
     """
     Measures the average prediction latency per sample in milliseconds.
-
-    Runs a short warm-up prediction to avoid one-time setup costs,
-    then predicts on the full dataset and calculates average latency.
+    *Relevant for inference speed measurement and comparison
 
     Args:
-        model (Pipeline): A trained scikit-learn pipeline with a `.predict()` method.
+        model (Pipeline): A trained pipeline with a `.predict()` method.
         X (array-like or Series): Input samples to predict.
 
     Returns:
