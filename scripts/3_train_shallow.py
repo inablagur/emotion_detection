@@ -244,39 +244,22 @@ def get_param_distributions(model_name: str, class_weight_toggle: bool):
     # Logistic regression model:
     if model_name == "lr":
         return {
-            # "clf__C": loguniform(1e-2, 1e2),            # Regularization strength
-            # "clf__class_weight": [None, "balanced"],    # "Balanced" handles class imbalance.
-            # "clf__tol": loguniform(1e-4, 3e-3),         # Stopping tolerance
-            # "clf__max_iter": [10000, 20000, 40000],     # Increase number of iterations to avoid convergence warning
-
-            # "clf__C": loguniform(1e-3, 1e1),            # C controls L2 strength# narrower C → faster, fewer non-converged fits
-            # "clf__class_weight": [None, "balanced"],    # "Balanced" handles class imbalance.
-            # "clf__tol": loguniform(1e-4, 3e-3),         # Stopping tolerance
-            # "clf__max_iter": [10000, 20000],      # Increase number of iterations to avoid convergence warning
-
-            "clf__estimator__C": loguniform(1e-3, 1e1),           # wide enough to find strong fits
-            "clf__estimator__class_weight": [None, "balanced"],   # let CV decide
-            "clf__estimator__tol": loguniform(1e-4, 3e-3),        # not too loose
-            "clf__estimator__max_iter": [10000, 20000, 30000],    # give tough classes room
+            "clf__C": loguniform(1e-2, 1e2),                                                        # C controls L2 strength
+            **({"clf__class_weight": [None, "balanced"]} if class_weight_toggle else {})            # class_weight only if requested; helpful if imbalance shows up.
         }
     
     # SVM model:
     if model_name == "lsvm":
         return {
-            "clf__C": loguniform(1e-3, 3e-1),           # Regularization strength
-            "clf__class_weight": [None, "balanced"],    # "Balanced" handles class imbalance.
-            "clf__tol": loguniform(1e-3, 5e-3),         # Stopping tolerance
-            "clf__max_iter": [10000, 20000, 40000],     # Increase number of iterations to avoid convergence warning
-
+            "clf__C": loguniform(1e-2, 1e2),                                                        # C controls regularization strength
+            **({"clf__class_weight": [None, "balanced"]} if class_weight_toggle else {})            # class_weight only if requested; helpful if imbalance shows up.
         }
         
     # Complement Naive Bayes model:
-    # TODO: Question: Why doesn't cnb have max_iter? It doesn't need to? (Keep in mind it does not contain runtime warnings at the moment)
-    # TODO: Should i pass the max_iter as an argument?
     if model_name == "cnb":
         # CNB handles class imbalance internally
         return {
-            "clf__alpha": loguniform(1e-3, 10)          # alpha controls smoothing;
+            "clf__alpha": loguniform(1e-3, 10)                                                      # alpha controls smoothing;
         }
     raise ValueError(f"Unknown model '{model_name}'")
 
@@ -309,7 +292,8 @@ if __name__ == "__main__":
     parser.add_argument("--n-iter", type=int, default=20, help="RandomizedSearchCV iterations per model.")
     parser.add_argument("--cv", type=int, default=3, help="Cross-validation folds in RandomizedSearchCV.")
     parser.add_argument("--random-seed", type=int, default=42, help="Random seed for reproducibility.")
-    
+    parser.add_argument("--class-weight-toggle", action="store_true", help="Include class_weight in LR/LinearSVC search (None vs 'balanced').")
+
     # Output
     parser.add_argument("--models-dir", type=Path, default=Path("models"), help="Directory to write serialized pipelines.")
     parser.add_argument("--reports-dir", type=Path, default=Path("reports"), help="Directory to write JSON reports / top-terms.")
@@ -347,45 +331,22 @@ if __name__ == "__main__":
         sublinear_tf=not args.no_sublinear_tf
     )
 
-
     # Model factory
     def make_pipeline(model_name: str) -> Pipeline:
-        # if model_name == "lr":
-        #     clf = LogisticRegression(
-        #         solver="saga",
-        #         penalty="l2",
-        #         multi_class="ovr",      #TODO: Testing it as an extra to the pipeline, to check if it works faster, with similar (or better) results
-        #         # max_iter=20000,         # Set default value
-        #         max_iter=10000,         # Set default value
-        #         tol=1e-3,
-        #         n_jobs=-1
-        #     )
         if model_name == "lr":
-            from sklearn.multiclass import OneVsRestClassifier
-            
-            base_lr = LogisticRegression(
+            clf = LogisticRegression(
                 solver="saga",
                 penalty="l2",
-                C=1.0,
-                # max_iter=20000,         # Set default value
-                max_iter=10000,         # Set default value
+                max_iter=5000,
                 tol=1e-3,
-                n_jobs=-1,
-                random_state=args.random_seed
+                n_jobs=-1
             )
-            clf = OneVsRestClassifier(base_lr, n_jobs=-1)  # Use OneVsRestClassifier to handle multi-class with LR
-
-
         elif model_name == "lsvm":
             clf = LinearSVC(loss="hinge")
-
-
         elif model_name == "cnb":
             clf = ComplementNB()
-
         else:
             raise ValueError(model_name)
-
         return Pipeline([("tfidf", tfidf), ("clf", clf)])
 
     # Train & evaluate each requested model on validation
@@ -396,9 +357,6 @@ if __name__ == "__main__":
         pipe = make_pipeline(model_name)
         param_distributions = get_param_distributions(model_name, args.class_weight_toggle)
 
-        from sklearn.model_selection import StratifiedKFold
-        args.cv = StratifiedKFold(n_splits=args.cv, shuffle=True, random_state=args.random_seed) # TODO: Addition in testintg
-        
         search = RandomizedSearchCV(
             estimator=pipe,
             param_distributions=param_distributions,
@@ -408,7 +366,6 @@ if __name__ == "__main__":
             n_jobs=-1,
             random_state=args.random_seed,
             verbose=1
-            # refit=True, verbose=0
         )
 
         t = timer()
@@ -422,7 +379,6 @@ if __name__ == "__main__":
         metrics_va = compute_metrics(yva, yva_pred, labels_order)
         ms_per_sample = latency_ms_per_sample(best, Xva)
 
-        
         # Save pipeline immediately
         model_fname = {
             "lr": "shallow_lr.pkl",
@@ -487,7 +443,7 @@ if __name__ == "__main__":
         m = item[1]
         return (m["macro_f1"], m["accuracy"])
 
-    winner_name, _ = sorted(val_summaries.items(), key=sort_key, reverse=True)[0]  
+    winner_name, _ = sorted(val_summaries.items(), key=sort_key, reverse=True)[0]
 
     # Retrain winner on train + validation, evaluate on test
     winner_pipe = make_pipeline(winner_name)
@@ -498,7 +454,6 @@ if __name__ == "__main__":
         "lsvm": args.models_dir / "shallow_lsvm.pkl",
         "cnb": args.models_dir / "shallow_cnb.pkl"
     }[winner_name]
-    
     winner_best: Pipeline = joblib.load(winner_best_path)
 
     # Refit on train + valid to use all available labeled data before testing
