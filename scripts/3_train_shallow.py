@@ -107,7 +107,7 @@ def latency_ms_per_sample(model, X):
     elapsed = t()
     return (elapsed / len(X)) * 1000.0
 
-def model_file_size_mb(path: Path) -> float:
+def model_file_size_mb(path: Path):
     """
     Returns the size of a saved model file in megabytes.
 
@@ -141,11 +141,11 @@ def save_json(path: Path, data: dict):
     """
     Saves a dictionary as a pretty-printed UTF-8 JSON file.
 
-    NumPy data types inside the dictionary are automatically converted
+    numpy data types inside the dictionary are automatically converted
     to Python-native types.
 
     Args:
-        path (Path): Path where the JSON file will be saved.
+        path (Path): Path to where the JSON file will be saved.
         data (dict): Data to serialize and save.
 
     Returns:
@@ -155,7 +155,7 @@ def save_json(path: Path, data: dict):
     with path.open("w", encoding="utf-8") as f:
         json.dump(clean, f, indent=2, ensure_ascii=False)
 
-def extract_top_terms_txt(pipeline: Pipeline, labels_order, k=20) -> str:
+def extract_top_terms_txt(pipeline: Pipeline, labels_order, k=20):
     """
     Generates a text block with the top-k most influential n-grams per class
     for linear models (e.g. Logistic Regression, LinearSVC etc...)
@@ -171,8 +171,7 @@ def extract_top_terms_txt(pipeline: Pipeline, labels_order, k=20) -> str:
     Returns:
         str: A formatted multi-line string with top terms per class.
     """
-    # TODO: What does it mean vec: TfidfVectorizer = pipeline.named_steps["tfidf"]? What is the vec variable? Why is it needed? which of them is the variable? I don't understand the syntax here.
-    vec: TfidfVectorizer = pipeline.named_steps["tfidf"]
+    vec = pipeline.named_steps["tfidf"]
     clf = pipeline.named_steps["clf"]
     if not hasattr(clf, "coef_"):
         return ""
@@ -228,7 +227,6 @@ def get_param_distributions(model_name: str, search_class_weight: bool):
 
     Args:
         model_name (str): One of {"lr", "lsvm", "cnb"}. See "Models included" in the script header.
-            
         search_class_weight (bool): If True, include 'class_weight'
             in the search space for LR and LinearSVC, trying both None and 'balanced' options. This can help with imbalanced data.  
 
@@ -317,7 +315,7 @@ if __name__ == "__main__":
     # Stable label order for metrics and confusion matrices
     labels_order = sorted(pd.concat([y_train, y_val, y_test]).unique().tolist())
 
-    # Shared TF–IDF vectorizer
+    # Shared TF–IDF vectorizer for all models
     tfidf = TfidfVectorizer(
         ngram_range=(1, args.ngram_max),
         min_df=args.min_df,
@@ -328,7 +326,7 @@ if __name__ == "__main__":
     )
 
     # Model factory
-    def make_pipeline(model_name: str) -> Pipeline:
+    def make_pipeline(model_name: str):
         if model_name == "lr":
             clf = LogisticRegression(
                 solver="saga",
@@ -357,7 +355,7 @@ if __name__ == "__main__":
             estimator=pipe,
             param_distributions=param_distributions,
             n_iter=args.n_iter,
-            scoring="f1_macro",
+            scoring="f1_macro",  # reduces majority-class bias, useful measurement for imbalanced target data
             cv=args.cv,
             n_jobs=-1,
             random_state=args.random_seed,
@@ -368,7 +366,7 @@ if __name__ == "__main__":
         search.fit(X_train, y_train)
         train_time = t()
 
-        best: Pipeline = search.best_estimator_ # Find the best pipeline for the specific model type   #TODO: Same note as for the val: tfidf - What does it mean when it's written like that? Why is it written like that?
+        best = search.best_estimator_ # Find the best pipeline for the specific model type
 
         # Validation metrics + latency
         y_val_pred = best.predict(X_val)
@@ -450,7 +448,7 @@ if __name__ == "__main__":
         "lsvm": args.models_dir / "shallow_lsvm.pkl",
         "cnb": args.models_dir / "shallow_cnb.pkl"
     }[winner_name]
-    winner_best: Pipeline = joblib.load(winner_best_path)
+    winner_best = joblib.load(winner_best_path)
 
     # Refit on train + valid to use all available labeled data before testing
     X_train_val = pd.concat([X_train, X_val], ignore_index=True)  # TODO: Maybe change this shortened name to somtehing that goes better with python conventions? Maybe do this for all the variables that need the same treatment?
@@ -499,37 +497,3 @@ if __name__ == "__main__":
     print("Artifacts written to:")
     print(f"  models/: {', '.join(sorted(os.listdir(args.models_dir)))}")
     print(f"  reports/: {', '.join(sorted(os.listdir(args.reports_dir)))}")
-    
-        
-    # TODO: Make sure to add the explanation that because "macro F1" ensures in the actual comparison that the winning model makes good result for each class individually and not just in total, thus deals with the case of bias because of imalanced dataset that is not taken care of
-    # Do that somewhere in the scripts, not too long, just when used for example
-    
-    
-# ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------    
-# ------------------------------------------------------------------------------------------ QUESTIONS FOR NEXT SESSION ------------------------------------------------------------------------------------------
-# """    
-# * I got this warning: "C:\Users\Inbal\anaconda3\envs\env_emotion_detection\lib\site-packages\sklearn\linear_model\_sag.py:348: ConvergenceWarning: The max_iter was reached which means the coef_ did not converge"
-
-# * I also got this warning: "C:\Users\Inbal\anaconda3\envs\env_emotion_detection\lib\site-packages\sklearn\svm\_base.py:1250: ConvergenceWarning: Liblinear failed to converge, increase the number of iterations."
-
-# * I'm not sure I understood: Does the number for --ngram-max means all the number of grams from 1 to the chosen number include? Meaning If I chose --ngram-max=5 it will go through all 1, 2, 3, 4, 5 grams?
-
-# * Why in --max_features :     parser.add_argument("--max-features", type=int, default=50_000, help="Cap TF-IDF vocabulary size (most frequent features kept).")
-
-# * default is written like this: 50_000 and not like this 50000? Does it read it like that? I don't understand.
-
-# * I don't understand what min-df does or referes to
-
-# * I don't understand what --no-sublinear-tf means if disabled or enabled, what does it affect?
-
-# * What is args.model_dir? I don't seem to find it
-# """
-
-
-# ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------    
-# ------------------------------------------------------------------------------------------ TODO's ------------------------------------------------------------------------------------------
-# """
-# 1. Answer the questions
-# 2. Fix the warnings
-# 3. In the notebook part - Compare between the models based on several parameters, including the complexities
-#    Keep in mind that the current winner in this script is selected based on the macro-F1 score, with accuracy as a tie-braker accuracy.
