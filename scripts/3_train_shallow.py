@@ -194,7 +194,7 @@ def compute_metrics(y_true, y_pred, labels_order):
 # --------------------------------------------------------- Randomized search spaces ---------------------------------------------------------
 def get_param_distributions(model_name: str, search_class_weight: bool):
     """
-    This funcion defines the hyperparameter search space for a given shallow model.
+    This function defines the hyperparameter search space for a given shallow model.
 
     The returned dictionary is designed to be passed into RandomizedSearchCV's `param_distributions`
     argument. It defines the search space for each model type.
@@ -277,7 +277,7 @@ if __name__ == "__main__":
     valid = pd.read_csv(args.valid)
     test  = pd.read_csv(args.test)
 
-    # Expect columns: text, label
+    # Expect columns: text, emotion (label)
     for df_name, df in [("train", train), ("validation", valid), ("test", test)]:
         if not {"text", "emotion"}.issubset(df.columns):
             raise ValueError(f"{df_name} missing required columns 'text' and 'emotion'.")
@@ -413,8 +413,6 @@ if __name__ == "__main__":
 
     winner_name, _ = sorted(val_summaries.items(), key=sort_key, reverse=True)[0]
 
-    # Retrain winner on train + validation, evaluate on test
-    winner_pipe = make_pipeline(winner_name)
     # Use the best params found on validation search for the winner
     # Reload from saved best pipeline to preserve exact params
     winner_best_path = {
@@ -424,8 +422,8 @@ if __name__ == "__main__":
     }[winner_name]
     winner_best = joblib.load(winner_best_path)
 
-    # Refit on train + valid to use all available labeled data before testing
-    X_train_val = pd.concat([X_train, X_val], ignore_index=True)  # TODO: Maybe change this shortened name to somtehing that goes better with python conventions? Maybe do this for all the variables that need the same treatment?
+    # Retrain winner on train + validation, evaluate on test
+    X_train_val = pd.concat([X_train, X_val], ignore_index=True) 
     y_train_val = pd.concat([y_train, y_val], ignore_index=True)
 
     t = timer()
@@ -471,3 +469,4 @@ if __name__ == "__main__":
     print("Artifacts written to:")
     print(f"  models/: {', '.join(sorted(os.listdir(args.models_dir)))}")
     print(f"  reports/: {', '.join(sorted(os.listdir(args.reports_dir)))}")
+    
