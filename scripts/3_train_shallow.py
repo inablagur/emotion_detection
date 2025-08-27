@@ -1,41 +1,13 @@
 """
-3_train_shallow_baseline.py — Shallow baselines for emotion classification
+3_train_shallow.py - Train shallow text classifiers for emotion detection.
 
-Why TF-IDF + linear models here?
-- Short texts → high-dimensional and mostly-zero (sparse) feature vectors.
-- TF-IDF maps token counts to a weighted, sparse representation that works extremely well with *linear* classifiers.
+Models: LogisticRegression, LinearSVC, ComplementNB over TF-IDF.
+Selection: RandomizedSearchCV on train; winner by macro-F1 (tie → accuracy).
+Refit: best model refit on train + validation; final evaluation on test.
+Outputs: metrics JSON, classification report, top terms for linear models.
 
-
-Models included:
-- lr   → Logistic Regression (multinomial, L2): strong on high-dimensional sparse text; probabilistic outputs; interpretable via coefficients; fast; handles multiclass directly; supports class weighting.
-- lsvm → LinearSVC (hinge loss, one-vs-rest): very strong baseline for text; efficient on sparse features; interpretable via linear weights.
-- cnb  → Complement Naive Bayes: probabilistic model tailored for text; uses complement statistics to stabilize rare features; extremely fast and robust to imbalance in sparse data.
-
-
-This script:
-1) Loads preprocessed CSVs (train/validation/test) from data/.
-2) Builds TF-IDF → classifier pipelines.
-3) Runs RandomizedSearchCV with macro-F1 on validation.
-4) Saves per-model validation JSON reports to reports/ folder.
-5) Selects the best model by validation macro-F1 (tie-break accuracy).
-6) Retrains the winner on train + validation and evaluates on test.
-7) Saves winner test JSON and serialized pipelines to models/.
-
-Outputs:
-- models/
-    shallow_lr.pkl
-    shallow_lsvm.pkl
-    shallow_cnb.pkl
-    shallow_winner.pkl
-- reports/
-    shallow_lr_val.json
-    shallow_lsvm_val.json
-    shallow_cnb_val.json
-
-    shallow_winner_test.json
-
-    shallow_top_features_lr.txt           (optional, only if LR trained)
-    shallow_top_features_lsvm.txt         (optional, only if LinearSVC trained)
+Usage:
+    python 3_train_shallow.py --help
 """
 
 # --------------------------------------------------------------------------------------------------------------------------------------------
