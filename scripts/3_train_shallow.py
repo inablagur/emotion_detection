@@ -5,8 +5,11 @@ Why TF-IDF + linear models here?
 - Short texts → high-dimensional and mostly-zero (sparse) feature vectors.
 - TF-IDF maps token counts to a weighted, sparse representation that works extremely well with *linear* classifiers.
 
-- Logistic Regression (multinomial, L2) and LinearSVC are strong, fast, and interpretable via word coefficients (top weighted n-grams per class). On large, sparse matrices, the 'saga' solver is efficient and handles L2 regularization well.  
-- Complement Naive Bayes is extremely fast on short text and provides a competitive baseline with different inductive bias.
+
+Models included:
+- lr   → Logistic Regression (multinomial, L2): strong on high-dimensional sparse text; probabilistic outputs; interpretable via coefficients; fast; handles multiclass directly; supports class weighting.
+- lsvm → LinearSVC (hinge loss, one-vs-rest): very strong baseline for text; efficient on sparse features; interpretable via linear weights.
+- cnb  → Complement Naive Bayes: probabilistic model tailored for text; uses complement statistics to stabilize rare features; extremely fast and robust to imbalance in sparse data.
 
 
 This script:
@@ -224,11 +227,7 @@ def get_param_distributions(model_name: str, class_weight_toggle: bool):
     argument. It defines the search space for each model type.
 
     Args:
-        model_name (str): The short name of the model
-            - "lr"   → Logistic Regression (multinomial, L2): Works well with high-dimensional sparse text, produces probabilistic outputs, interpretable via coefficients, fast to train. Handles multiclass directly and supports class weighting.
-            - "lsvm" → LinearSVC (hinge loss, one-vs-rest): very strong baseline for text classification; handles high-dimensional sparse features efficiently; interpretable like LR.
-            - "cnb"  → Complement Naive Bayes: Probabilistic model tailored for text; uses feature stats from all other classes to stabilize estimates for rare classes; extremely fast and robust to imbalance in sparse data.
-            #TODO: Add this notes for each model where it belongs and relevant, which I don't think is in thisfunctions
+        model_name (str): One of {"lr", "lsvm", "cnb"}. See "Models included" in the script header.
             
         class_weight_toggle (bool): If True, include 'class_weight'
             in the search space for LR and LinearSVC, trying both None and 'balanced' options. This can help with imbalanced data.  
