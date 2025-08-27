@@ -121,10 +121,10 @@ def model_file_size_mb(path: Path):
 
 def to_python_types(obj):
     """
-    Converts NumPy data types to native Python types for safe JSON serialization.
+    Converts numpy data types to native Python types for safe JSON serialization.
 
     Args:
-        obj: The object to convert (could be NumPy scalar, NumPy array, or native type).
+        obj: The object to convert (numpy scalar incl. bool, numpy array, or native type).
 
     Returns:
         Any: A Python-native version of the input object.
@@ -133,6 +133,8 @@ def to_python_types(obj):
         return int(obj)
     if isinstance(obj, (np.floating,)):
         return float(obj)
+    if isinstance(obj, (np.bool_,)):
+        return bool(obj)
     if isinstance(obj, (np.ndarray,)):
         return obj.tolist()
     return obj
