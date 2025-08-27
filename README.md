@@ -56,8 +56,15 @@ emotion_detection/
 (both) **Preprocessing**: lowercase, strip punctuation, expand contractions, pruning.
 
 ### 1️⃣ Shallow Baseline  
-1. **Vectorization**: TF–IDF (`TfidfVectorizer(ngram_range=(1,2), max_features=10k)`)  
-2. **Classification**: Logistic Regression (or SVM / Naïve Bayes)  
+1. **Vectorization**: TF–IDF (`TfidfVectorizer(ngram_range=(1,2), max_features=50k)`)  
+2. **Classification**:  
+   - **lr - Logistic Regression (multinomial, L2)**  
+     Strong on high-dimensional sparse text; probabilistic outputs; coefficients interpretable; fast; handles multiclass directly; supports class weighting.  
+   - **lsvm - LinearSVC (one-vs-rest, squared hinge)**  
+     Very strong baseline for text; efficient on sparse features; interpretable via linear weights; robust when `n_features > n_samples`.  
+   - **cnb - Complement Naïve Bayes**  
+     Probabilistic model tailored for text; uses complement statistics to stabilize rare features; extremely fast; robust to imbalance.  
+  
 
 
 ### 2️⃣ Transformer Fine-Tuning  
