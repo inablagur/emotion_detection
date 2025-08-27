@@ -231,9 +231,6 @@ def get_param_distributions(model_name: str, class_weight_toggle: bool):
             
         class_weight_toggle (bool): If True, include 'class_weight'
             in the search space for LR and LinearSVC, trying both None and 'balanced' options. This can help with imbalanced data.  
-            
-            #TODO: Add explanation to Why CNB doesn't use this options (It doesn’t have a class_weight parameter because reweighting classes isn't part of its math. 
-            Instead, it naturally incorporates class frequency into priors (P(class)) and mitigates imbalance through its complement estimation (training each class against all others) and smoothing (alpha).) 
 
     Returns:
         dict: Parameter distribution mapping for use in RandomizedSearchCV.
@@ -313,12 +310,12 @@ if __name__ == "__main__":
         if not {"text", "emotion"}.issubset(df.columns):
             raise ValueError(f"{df_name} missing required columns 'text' and 'emotion'.")
 
-    Xtr, ytr = train["text"].astype(str), train["emotion"].astype(str)
-    Xva, yva = valid["text"].astype(str), valid["emotion"].astype(str)
-    Xte, yte = test["text"].astype(str),  test["emotion"].astype(str)
+    X_train, y_train = train["text"].astype(str), train["emotion"].astype(str)
+    X_val, y_val = valid["text"].astype(str), valid["emotion"].astype(str)
+    X_test, y_test = test["text"].astype(str),  test["emotion"].astype(str)
 
     # Stable label order for metrics and confusion matrices
-    labels_order = sorted(pd.concat([ytr, yva, yte]).unique().tolist())
+    labels_order = sorted(pd.concat([y_train, y_val, y_test]).unique().tolist())
 
     # Shared TF–IDF vectorizer
     tfidf = TfidfVectorizer(
@@ -368,15 +365,15 @@ if __name__ == "__main__":
         )
 
         t = timer()
-        search.fit(Xtr, ytr)
+        search.fit(X_train, y_train)
         train_time = t()
 
         best: Pipeline = search.best_estimator_ # Find the best pipeline for the specific model type   #TODO: Same note as for the val: tfidf - What does it mean when it's written like that? Why is it written like that?
 
         # Validation metrics + latency
-        yva_pred = best.predict(Xva)
-        metrics_va = compute_metrics(yva, yva_pred, labels_order)
-        ms_per_sample = latency_ms_per_sample(best, Xva)
+        y_val_pred = best.predict(X_val)
+        metrics_val = compute_metrics(y_val, y_val_pred, labels_order)
+        latency_ms_val = latency_ms_per_sample(best, X_val)
 
         # Save pipeline immediately
         model_fname = {
@@ -404,10 +401,10 @@ if __name__ == "__main__":
             },
             "metrics": {
                 "split": "validation",
-                **metrics_va
+                **metrics_val
             },
             "timing_sec": {"train": round(train_time, 4)},
-            "latency_ms_per_sample": round(ms_per_sample, 4),
+            "latency_ms_per_sample": round(latency_ms_val, 4),
             "model_size_mb": size_mb,
             "random_seed": args.random_seed
         }
@@ -456,16 +453,16 @@ if __name__ == "__main__":
     winner_best: Pipeline = joblib.load(winner_best_path)
 
     # Refit on train + valid to use all available labeled data before testing
-    Xtrva = pd.concat([Xtr, Xva], ignore_index=True)  # TODO: Maybe change this shortened name to somtehing that goes better with python conventions?
-    ytrva = pd.concat([ytr, yva], ignore_index=True)
+    X_train_val = pd.concat([X_train, X_val], ignore_index=True)  # TODO: Maybe change this shortened name to somtehing that goes better with python conventions? Maybe do this for all the variables that need the same treatment?
+    y_train_val = pd.concat([y_train, y_val], ignore_index=True)
 
     t = timer()
-    winner_best.fit(Xtrva, ytrva)
+    winner_best.fit(X_train_val, y_train_val)
     train_time = t()
 
-    yte_pred = winner_best.predict(Xte)
-    metrics_te = compute_metrics(yte, yte_pred, labels_order)
-    ms_per_sample_test = latency_ms_per_sample(winner_best, Xte)
+    y_test_pred = winner_best.predict(X_test)
+    metrics_test = compute_metrics(y_test, y_test_pred, labels_order)
+    latency_ms_test = latency_ms_per_sample(winner_best, X_test)
     size_mb_test = model_file_size_mb(winner_best_path)
 
     # Save a convenience copy for the winner
@@ -489,9 +486,9 @@ if __name__ == "__main__":
     winner_report = {
         "winner_model": {"lr":"logistic_regression","lsvm":"linear_svc","cnb":"complement_nb"}[winner_name],
         "winner_params": winner_params,
-        "metrics": {"split": "test", **metrics_te},
+        "metrics": {"split": "test", **metrics_test},
         "timing_sec": {"train": round(train_time, 4)},
-        "latency_ms_per_sample": round(ms_per_sample_test, 4),
+        "latency_ms_per_sample": round(latency_ms_test, 4),
         "model_size_mb": size_mb_test,
     }
     save_json(args.reports_dir / "shallow_winner_test.json", winner_report)
@@ -503,9 +500,9 @@ if __name__ == "__main__":
     print(f"  models/: {', '.join(sorted(os.listdir(args.models_dir)))}")
     print(f"  reports/: {', '.join(sorted(os.listdir(args.reports_dir)))}")
     
-    
         
     # TODO: Make sure to add the explanation that because "macro F1" ensures in the actual comparison that the winning model makes good result for each class individually and not just in total, thus deals with the case of bias because of imalanced dataset that is not taken care of
+    # Do that somewhere in the scripts, not too long, just when used for example
     
     
 # ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------    
