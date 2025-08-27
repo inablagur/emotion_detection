@@ -92,7 +92,7 @@ def timer():
 def latency_ms_per_sample(model, X):
     """
     Measures the average prediction latency per sample in milliseconds.
-    *Relevant for inference speed measurement and comparison
+    *Relevant for inference speed measurement and comparison.
 
     Args:
         model (Pipeline): A trained pipeline with a `.predict()` method.
@@ -181,7 +181,7 @@ def extract_top_terms_txt(pipeline: Pipeline, labels_order, k=20):
     lines = []
     lines.append(f"# {clf.__class__.__name__} — top {k} features per class")
     for i, cls in enumerate(labels_order):
-        coefs = clf.coef_[i] if clf.coef_.ndim > 1 else clf.coef_.ravel()
+        coefs = clf.coef_[i] if clf.coef_.ndim > 1 else (clf.coef_.ravel() if cls == clf.classes_[-1] else -clf.coef_.ravel())
         # For one-vs-rest LinearSVC, classes_ gives order; LR multinomial is per class as well.
         # argsort top-k largest positive weights
         topk_idx = np.argsort(coefs)[-k:][::-1]
