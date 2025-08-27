@@ -219,7 +219,7 @@ def compute_metrics(y_true, y_pred, labels_order):
 
 # --------------------------------------------------------------------------------------------------------------------------------------------
 # --------------------------------------------------------- Randomized search spaces ---------------------------------------------------------
-def get_param_distributions(model_name: str, class_weight_toggle: bool):
+def get_param_distributions(model_name: str, search_class_weight: bool):
     """
     This funcion defines the hyperparameter search space for a given shallow model.
 
@@ -229,7 +229,7 @@ def get_param_distributions(model_name: str, class_weight_toggle: bool):
     Args:
         model_name (str): One of {"lr", "lsvm", "cnb"}. See "Models included" in the script header.
             
-        class_weight_toggle (bool): If True, include 'class_weight'
+        search_class_weight (bool): If True, include 'class_weight'
             in the search space for LR and LinearSVC, trying both None and 'balanced' options. This can help with imbalanced data.  
 
     Returns:
@@ -241,14 +241,14 @@ def get_param_distributions(model_name: str, class_weight_toggle: bool):
     if model_name == "lr":
         return {
             "clf__C": loguniform(1e-2, 1e2),                                                        # C controls L2 strength
-            **({"clf__class_weight": [None, "balanced"]} if class_weight_toggle else {})            # class_weight only if requested; helpful if imbalance shows up.
+            **({"clf__class_weight": [None, "balanced"]} if search_class_weight else {})            # class_weight only if requested; helpful if imbalance shows up.
         }
     
     # SVM model:
     if model_name == "lsvm":
         return {
             "clf__C": loguniform(1e-2, 1e2),                                                        # C controls regularization strength
-            **({"clf__class_weight": [None, "balanced"]} if class_weight_toggle else {})            # class_weight only if requested; helpful if imbalance shows up.
+            **({"clf__class_weight": [None, "balanced"]} if search_class_weight else {})            # class_weight only if requested; helpful if imbalance shows up.
         }
         
     # Complement Naive Bayes model:
@@ -282,13 +282,13 @@ if __name__ == "__main__":
     parser.add_argument("--ngram-max", type=int, default=2, help="Use (1, ngram_max) word n-grams.")
     parser.add_argument("--max-features", type=int, default=50_000, help="Cap TF-IDF vocabulary size (most frequent features kept).")
     parser.add_argument("--min-df", type=int, default=2, help="Min documents a term must appear in to be kept (filters rare noise).")
-    parser.add_argument("--no-sublinear-tf", action="store_true", help="Disable sublinear TF scaling (default is enabled).")
+    parser.add_argument("--disable-sublinear-tf", action="store_true", help="Disable sublinear TF scaling (default is enabled).")
 
     # Search options
     parser.add_argument("--n-iter", type=int, default=20, help="RandomizedSearchCV iterations per model.")
     parser.add_argument("--cv", type=int, default=3, help="Cross-validation folds in RandomizedSearchCV.")
     parser.add_argument("--random-seed", type=int, default=42, help="Random seed for reproducibility.")
-    parser.add_argument("--class-weight-toggle", action="store_true", help="Include class_weight in LR/LinearSVC search (None vs 'balanced').")
+    parser.add_argument("--search-class-weight", action="store_true", help="Include class_weight in LR/LinearSVC search (None vs 'balanced' instead of the default None).")
 
     # Output
     parser.add_argument("--models-dir", type=Path, default=Path("models"), help="Directory to write serialized pipelines.")
@@ -324,7 +324,7 @@ if __name__ == "__main__":
         max_features=args.max_features,
         lowercase=True,
         strip_accents="unicode",
-        sublinear_tf=not args.no_sublinear_tf
+        sublinear_tf=not args.disable_sublinear_tf
     )
 
     # Model factory
@@ -351,7 +351,7 @@ if __name__ == "__main__":
 
     for model_name in args.models:
         pipe = make_pipeline(model_name)
-        param_distributions = get_param_distributions(model_name, args.class_weight_toggle)
+        param_distributions = get_param_distributions(model_name, args.search_class_weight)
 
         search = RandomizedSearchCV(
             estimator=pipe,
@@ -396,7 +396,7 @@ if __name__ == "__main__":
                 "ngram_range": [1, args.ngram_max],
                 "max_features": args.max_features,
                 "min_df": args.min_df,
-                "sublinear_tf": not args.no_sublinear_tf,
+                "sublinear_tf": not args.disable_sublinear_tf,
                 "strip_accents": "unicode"
             },
             "metrics": {
