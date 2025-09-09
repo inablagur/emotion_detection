@@ -266,14 +266,24 @@ if __name__ == "__main__":
     # Clean it
     cleaned = pipe.clean_df(df) 
     
-    # Determine output path (if no output path is provided)
+    # Determine output path based on three cases:
+    # 1. No output path - write to input path with _clean suffix
+    # 2. Output path with CSV filename - write to that path
+    # 3. Output path without CSV filename - write to that directory with input filename + _clean.csv
     in_path = Path(args.input_csv)
+    
     if args.output_csv:
         out_path = Path(args.output_csv)
-        # Ensure .csv suffix
-        if out_path.suffix.lower() != ".csv":
-            out_path = out_path.with_suffix(".csv")
+        
+        # Check if the output path contains a CSV filename
+        if out_path.suffix.lower() == ".csv":
+            # Case 2: Output path with CSV filename - use as is
+            pass
+        else:
+            # Case 3: Output path without CSV filename - add input filename + _clean.csv
+            out_path = out_path / f"{in_path.stem}_clean.csv"
     else:
+        # Case 1: No output path - write to input path with _clean suffix
         out_path = in_path.parent / f"{in_path.stem}_clean{in_path.suffix}"
 
     # Make sure parent exists
