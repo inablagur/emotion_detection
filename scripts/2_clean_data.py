@@ -292,6 +292,3 @@ if __name__ == "__main__":
     # Save to CSV
     cleaned.to_csv(out_path, index=False)
     print(f"✅ Cleaned CSV written to: {out_path.resolve()}")      # Print success message
-    
-    
-    # TODO: Align this script with 1_load_data.py and 3_make_split.py, make sure the data is cleaned and saved to the correct directory.
