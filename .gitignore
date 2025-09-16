@@ -4,13 +4,17 @@ what to do.md
 # Ignore created data files
 data/*
 !data/.gitkeep
+!data/original/.gitkeep
+!data/clean/.gitkeep
 
 # Ignore saved models and reports
 models/*
 !models/.gitkeep
+!models/transformers/.gitkeep
 
 reports/*
 !reports/.gitkeep
+!reports/transformers/.gitkeep
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
