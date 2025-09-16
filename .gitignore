@@ -9,9 +9,12 @@ data/labels/*
 # Ignore saved models and reports (but preserve directory structure)  
 models/transformers/*
 !models/transformers/.gitkeep
+!models/transformers/transformer_winner/.gitkeep
 
-reports/transformers/*
-!reports/transformers/.gitkeep
+reports/metrics/transformers/*
+!reports/metrics/transformers/.gitkeep
+reports/plots/transformers/*
+!reports/plots/transformers/.gitkeep
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
