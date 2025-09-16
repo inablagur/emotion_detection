@@ -26,15 +26,16 @@ emotion_detection/
 │   │   ├── train.csv                                   ← Training examples (text + emotion)                    (Output of `scripts/1_load_data.py`)
 │   │   ├── validation.csv                              ← Validation examples                                   (Output of `scripts/1_load_data.py`)
 │   │   └── test.csv                                    ← Test examples                                         (Output of `scripts/1_load_data.py`)
-│   └── clean/                                          ← Preprocessed dataset files
-│       ├── train_clean.csv                             ← Preprocessed Training examples (text + emotion)       (Output of `scripts/2_clean_data.py`)
-│       ├── validation_clean.csv                        ← Preprocessed Validation examples                      (Output of `scripts/2_clean_data.py`)
-│       └── test_clean.csv                              ← Preprocessed Test examples                            (Output of `scripts/2_clean_data.py`)
+│   ├── clean/                                          ← Preprocessed dataset files
+│   │   ├── train_clean.csv                             ← Preprocessed Training examples (text + emotion)       (Output of `scripts/2_clean_data.py`)
+│   │   ├── validation_clean.csv                        ← Preprocessed Validation examples                      (Output of `scripts/2_clean_data.py`)
+│   │   └── test_clean.csv                              ← Preprocessed Test examples                            (Output of `scripts/2_clean_data.py`)
+│   └── labels/                                         ← Label mapping files
+│       └── label2id.json                               ← Consistent class ordering mapping                     (anger:0, fear:1, joy:2, love:3, sadness:4, surprise:5)
 │
 ├── scripts/                                            ← Helper scripts for data prep & model runs, executable entry points.
-│   ├── 1_load_data.py                                  ← Loads HF “emotion” dataset, writes train/val/test CSVs
-│   └── 2_clean_data.py                                 ← Preprocesses text for both shallow and transformer models     
-│   └── 3_train_shallow.py                              ← Train shallow classifiers, save best models & reports
+│   ├── 1_load_data.py                                  ← Loads HF "emotion" dataset, writes train/val/test CSVs
+│   └── 2_clean_data.py                                 ← Preprocesses text for both shallow and transformer models
 │
 ├── notebooks/                                          ← Jupyter notebooks, aligned with milestones
 │   ├── 01_data_exploration.ipynb                       ← Explore data: counts, lengths, quirks
