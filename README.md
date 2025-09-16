@@ -22,12 +22,14 @@ We use the **Kaggle “Emotion”** dataset (28 k samples, 6 labels - anger; fea
 emotion_detection/        
 │
 ├── data/                                               ← All raw & split datasets
-│   ├── train.csv                                       ← Training examples (text + emotion)                    (Output of `scripts/1_load_data.py`)
-│   ├── validation.csv                                  ← Validation examples                                   (Output of `scripts/1_load_data.py`)
-│   └── test.csv                                        ← Test examples                                         (Output of `scripts/1_load_data.py`)
-│   ├── train_clean.csv                                 ← Preprocessed Training examples (text + emotion)       (Output of `scripts/2_clean_data.py`)
-│   ├── validation_clean.csv                            ← Preprocessed Validation examples                      (Output of `scripts/2_clean_data.py`)
-│   └── test_clean.csv                                  ← Preprocessed Test examples                            (Output of `scripts/2_clean_data.py`)
+│   ├── original/                                       ← Raw dataset files
+│   │   ├── train.csv                                   ← Training examples (text + emotion)                    (Output of `scripts/1_load_data.py`)
+│   │   ├── validation.csv                              ← Validation examples                                   (Output of `scripts/1_load_data.py`)
+│   │   └── test.csv                                    ← Test examples                                         (Output of `scripts/1_load_data.py`)
+│   └── clean/                                          ← Preprocessed dataset files
+│       ├── train_clean.csv                             ← Preprocessed Training examples (text + emotion)       (Output of `scripts/2_clean_data.py`)
+│       ├── validation_clean.csv                        ← Preprocessed Validation examples                      (Output of `scripts/2_clean_data.py`)
+│       └── test_clean.csv                              ← Preprocessed Test examples                            (Output of `scripts/2_clean_data.py`)
 │
 ├── scripts/                                            ← Helper scripts for data prep & model runs, executable entry points.
 │   ├── 1_load_data.py                                  ← Loads HF “emotion” dataset, writes train/val/test CSVs
@@ -42,8 +44,10 @@ emotion_detection/
 │   └── 04_compare_shallow_vs_transformers.ipynb        ← Compare best shallow vs transformer models (performance, efficiency, trade-offs)
 │                                                       
 ├── reports/                                            ← JSON reports and interpretation files for each trained model
+│   └── transformers/                                   ← Transformer model reports and results
 │
 ├── models/                                             ← Saved model checkpoints (populates later)
+│   └── transformers/                                   ← Transformer model checkpoints and saved models
 │
 ├── README.md                                           ← High-level overview, setup, and workflow
 ├── requirements.txt                                    ← Pinned dependencies (Python 3.10)
@@ -88,30 +92,74 @@ emotion_detection/
 
 ## ⚙️ Setup
 
-1. **Python & environment**  
-   - Requires Python 3.8–3.10 (tested on 3.10)  
-     
-2. **Clone the repo**  
+### Prerequisites
+- **Python**: 3.8–3.10 (tested on 3.10)
+- **Git**: For cloning the repository
+- **CUDA** (optional): For GPU acceleration with transformers
+
+### Installation Steps
+
+1. **Clone the repository**
    ```bash
    git clone git@github.com:<YOUR_USERNAME>/emotion_detection.git
    cd emotion_detection
+   ```
 
-3. **Install Requirements**  
+2. **Create a virtual environment** (recommended)
+   ```bash
+   # Using venv
+   python -m venv emotion_env
+   
+   # Activate (Windows)
+   emotion_env\Scripts\activate
+   
+   # Activate (Linux/Mac)
+   source emotion_env/bin/activate
+   ```
+
+3. **Install dependencies**
    ```bash
    pip install -r requirements.txt
+   ```
 
-4. **Prepare the data**  
+### Data Preparation
+
+4. **Download and prepare the dataset**
    ```bash
-   # Read and save the data
+   # Load the emotion dataset from Hugging Face
    python scripts/1_load_data.py
+   
+   # Clean and preprocess each data file individually
+   python scripts/2_clean_data.py --input-csv data/original/train.csv --output-csv data/clean/train_clean.csv
+   python scripts/2_clean_data.py --input-csv data/original/validation.csv --output-csv data/clean/validation_clean.csv
+   python scripts/2_clean_data.py --input-csv data/original/test.csv --output-csv data/clean/test_clean.csv
+   
+   ```
 
-   # Preprocess and save the data
-   python scripts/2_clean_data.py
+5. **Verify data preparation**
+   ```bash
+   # Check that all data files exist
+   ls data/clean/
+   # Should show: test_clean.csv, train_clean.csv, validation_clean.csv
+   ```
 
-5. **(To be added)**
-    - Model training scripts (TF-IDF, transformer)
-    - Evaluation & comparison tools
-    - Demo deployment commands
+### Running the Project
+
+6. **Start with data exploration**
+   ```bash
+   jupyter notebook notebooks/01_data_exploration.ipynb
+   ```
+
+7. **Run shallow models comparison**
+   ```bash
+   jupyter notebook notebooks/02_shallow_models_comparison.ipynb
+   ```
+
+### Troubleshooting
+- **CUDA issues**: If you encounter CUDA-related errors, the project will fall back to CPU training. CUDA is optional but recommended for faster transformer training
+- **Memory issues**: For large models, consider reducing batch size in training scripts
+- **Dataset download**: First run may take time to download the emotion dataset from Hugging Face
+- **Data cleaning errors**: Ensure input CSV files exist in `data/original/` before running cleaning scripts
 ---
 
 ## 📍 Roadmap & Status
