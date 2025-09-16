@@ -1,19 +1,16 @@
-# Ignore tasks and status notes
-what to do.md
-
-# Ignore created data files
-data/*
-!data/.gitkeep
+# Ignore created data files (but preserve directory structure)
+data/original/*
 !data/original/.gitkeep
+data/clean/*
 !data/clean/.gitkeep
+data/labels/*
+!data/labels/.gitkeep
 
-# Ignore saved models and reports
-models/*
-!models/.gitkeep
+# Ignore saved models and reports (but preserve directory structure)  
+models/transformers/*
 !models/transformers/.gitkeep
 
-reports/*
-!reports/.gitkeep
+reports/transformers/*
 !reports/transformers/.gitkeep
 
 # Byte-compiled / optimized / DLL files
