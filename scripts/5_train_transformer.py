@@ -3,15 +3,17 @@
 import argparse
 import json
 import os
+import random
 import sys
 from pathlib import Path
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, Optional
+
+import traceback
 import warnings
 warnings.filterwarnings("ignore")
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.utils.data import DataLoader
 import pandas as pd
 import numpy as np
@@ -24,7 +26,7 @@ from transformers import (
     AutoModel, 
     AutoConfig
 )
-import uuid
+
 from datetime import datetime
 import time
 
@@ -41,6 +43,21 @@ DEFAULT_LABELS_FILE = "data/labels/label2id.json"
 DEFAULT_MAX_LENGTH = 512
 DEFAULT_BATCH_SIZE = 16
 DEFAULT_EPOCHS = 5
+
+# Default hyperparameter grids for randomized search
+# Currently only 'frozen' method is implemented
+# When adding new methods (finetune, peft), define their grids here with appropriate ranges
+DEFAULT_HYPERPARAMETER_GRIDS = {
+    'frozen': {
+        'learning_rate': [1e-4, 2e-4, 5e-4, 1e-3, 2e-3],  # Higher LR since only training head
+        'batch_size': [8, 16, 32],
+        'epochs': [3, 4, 5, 6],
+        'loss_type': ['weighted', 'standard'],
+        'weight_decay': [0.0, 0.01, 0.05, 0.1]  # L2 regularization
+    }
+    # 'finetune': {...}  # To be added when implementing full fine-tuning
+    # 'peft': {...}      # To be added when implementing PEFT/LoRA
+}
 
 def fail_fast_checks(train_data: str, val_data: str, test_data: str, labels_file: str) -> Tuple[bool, str]:
     """
@@ -89,7 +106,7 @@ def load_data(train_data: str, val_data: str, test_data: str, labels_file: str) 
     Returns:
         Tuple of (train_df, val_df, test_df, label2id)
     """
-    print("Loading data...")
+    print("\nLoading data...")
     
     # Load data
     train_df = pd.read_csv(train_data)
@@ -100,7 +117,8 @@ def load_data(train_data: str, val_data: str, test_data: str, labels_file: str) 
     with open(labels_file, "r") as f:
         label2id = json.load(f)
     
-    print(f"Loaded {len(train_df)} train, {len(val_df)} validation, {len(test_df)} test samples")
+    total_samples = len(train_df) + len(val_df) + len(test_df)
+    print(f"Loaded {len(train_df)} ({np.round((len(train_df) / total_samples) * 100)}%) train, {len(val_df)} ({np.round((len(val_df) / total_samples) * 100)}%) validation, {len(test_df)} ({np.round((len(test_df) / total_samples) * 100)}%) test")
     print(f"Labels: {label2id}")
     
     return train_df, val_df, test_df, label2id
@@ -156,7 +174,8 @@ class FrozenEmotionClassifier(nn.Module):
         print(f"✅ Frozen {sum(1 for p in self.transformer.parameters())} parameters")
         
         # Classification head - start with linear head
-        # If needed, try MLP (Linear→GELU→Dropout→Linear)
+        # TODO: Experiment with MLP head architecture (Linear→GELU→Dropout→Linear) for better performance
+        # TODO: Make head architecture configurable via hyperparameter grid
         self.classifier = nn.Linear(self.config.hidden_size, num_labels)
         self.dropout = nn.Dropout(hidden_dropout_prob)
         
@@ -227,7 +246,7 @@ class FrozenEmotionClassifier(nn.Module):
                 'num_labels': self.config.num_labels,
                 'created_at': datetime.now().isoformat()
             }, f, indent=2)
-        print(f"✅ Model saved successfully")
+        print(f"✅ Model saved successfully\n")
 
 def compute_class_weights(train_labels: list, label2id: Dict[str, int]) -> torch.Tensor:
     """
@@ -255,7 +274,7 @@ def compute_class_weights(train_labels: list, label2id: Dict[str, int]) -> torch
         emotion = id2label[class_id]
         weight = weights[class_id]
         print(f"   {emotion}: {count} samples (weight: {weight:.3f})")
-    
+    print("\n")
     return class_weights
 
 def train_frozen_model(model_name: str, train_df: pd.DataFrame, val_df: pd.DataFrame, 
@@ -323,7 +342,10 @@ def train_frozen_model(model_name: str, train_df: pd.DataFrame, val_df: pd.DataF
     
     # Setup optimizer - ONLY trains classification head (faster)
     trainable_params = [p for p in model.parameters() if p.requires_grad]
-    print(f"🎯 Training {len(trainable_params)} parameters (head only)")
+    num_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    num_frozen = sum(p.numel() for p in model.parameters() if not p.requires_grad)
+    total_params = num_trainable + num_frozen
+    print(f"🎯 Model parameters: {total_params:,} total | {num_trainable:,} trainable | {num_frozen:,} frozen")
     
     optimizer = torch.optim.AdamW(trainable_params, lr=args.learning_rate, weight_decay=0.01)
     print(f"🎯 Using learning rate: {args.learning_rate}")
@@ -334,7 +356,7 @@ def train_frozen_model(model_name: str, train_df: pd.DataFrame, val_df: pd.DataF
     patience_counter = 0
     early_stopping_patience = 3
     
-    print(f"🏃‍♂️ Starting training for {args.epochs} epochs...")
+    print(f"🏃‍♂️ Starting training for {args.epochs} epochs...\n")
     training_start = time.time()
     
     for epoch in range(args.epochs):
@@ -542,199 +564,409 @@ def save_results(model, tokenizer, metrics: Dict[str, Any], model_name: str, mod
     plt.close()
     
     save_time = time.time() - save_start
-    print(f"📈 Saved confusion matrix to {plot_file}")
+    print(f"📈 Saved confusion matrix to {plot_file}\n")
     print(f"✅ Results saved in {save_time:.1f}s")
 
-def run_hyperparameter_comparison(train_df: pd.DataFrame, val_df: pd.DataFrame, 
-                                 test_df: pd.DataFrame, label2id: Dict[str, int], 
-                                 models_to_compare: list, quick_mode: bool = False, 
-                                 mode: str = 'frozen') -> pd.DataFrame:
+# --------------------------------------------------------------------------------------------------------------------------------------------
+# ------------------------------------------------- Training Dispatcher & Randomized Search ------------------------------------------------
+def train_model(method: str, model_name: str, train_df: pd.DataFrame, 
+                val_df: pd.DataFrame, label2id: Dict[str, int], 
+                config: Dict[str, Any]) -> Tuple[Any, Dict[str, float], Any]:
     """
-    Run comprehensive hyperparameter comparison with multiple models.
-    Similar to randomized search but systematic for reproducibility.
-    Tests different combinations and saves the best results.
+    Train a transformer model using the specified training method.
+    Dispatcher function that routes to the appropriate training implementation.
     
     Args:
-        train_df, val_df, test_df: Data splits
+        method: Training method ('frozen', 'finetune', 'peft')
+        model_name: Name of the transformer model
+        train_df, val_df: Data splits
         label2id: Label mapping
-        models_to_compare: List of model names to compare
-        quick_mode: If True, run fewer combinations for faster testing
+        config: Hyperparameter configuration dict
         
     Returns:
-        DataFrame with all experiment results
+        Tuple of (model, metrics, tokenizer)
     """
-    print("🔬 Starting comprehensive hyperparameter comparison...")
-    print(f"🤖 Models to compare: {models_to_compare}")
+    # Create args object from config
+    class Args:
+        def __init__(self, config: Dict[str, Any], model_name: str, method: str):
+            self.model = model_name
+            self.mode = method
+            self.epochs = config.get('epochs', DEFAULT_EPOCHS)
+            self.batch_size = config.get('batch_size', DEFAULT_BATCH_SIZE)
+            self.max_length = config.get('max_length', DEFAULT_MAX_LENGTH)
+            self.learning_rate = config.get('learning_rate', 2e-5)
+            self.loss_type = config.get('loss_type', 'standard')
+            self.weight_decay = config.get('weight_decay', 0.0)
+            # Additional method-specific parameters can be added here when implementing finetune/peft
     
-    # Define comprehensive hyperparameter grid
-    if quick_mode:
-        # Quick mode: fewer combinations for testing
-        learning_rates = [2e-5]
-        batch_sizes = [8, 16]
-        loss_types = ['weighted']
-        epochs = 2
-        print("⚡ Quick mode: Testing essential combinations only")
+    args = Args(config, model_name, method)
+    
+    # Dispatch to appropriate training function
+    if method == 'frozen':
+        return train_frozen_model(model_name, train_df, val_df, label2id, args)
+    elif method == 'finetune':
+        # TODO: Implement full fine-tuning when ready
+        raise NotImplementedError(f"Training method '{method}' not yet implemented")
+    elif method == 'peft':
+        # TODO: Implement PEFT/LoRA when ready
+        raise NotImplementedError(f"Training method '{method}' not yet implemented")
     else:
-        # Full mode: comprehensive search
-        learning_rates = [1e-5, 2e-5, 3e-5, 5e-5, 8e-5]  # More LR options
-        batch_sizes = [8, 16, 32]  # Different batch sizes
-        loss_types = ['weighted', 'standard']  # Compare loss functions
-        epochs = 4  # More epochs for better convergence
-        print("🔍 Full mode: Comprehensive hyperparameter search")
+        raise ValueError(f"Unknown training method: {method}")
+
+
+def run_randomized_search(train_df: pd.DataFrame, val_df: pd.DataFrame, 
+                          label2id: Dict[str, int], 
+                          models: list, method: str, 
+                          num_combinations: int = 10,
+                          hyperparameter_grid: Optional[Dict[str, list]] = None,
+                          random_seed: Optional[int] = 42) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+    """
+    Run randomized hyperparameter search for specified models and training method.
     
-    # Generate all combinations
-    configs = []
-    for model in models_to_compare:
-        for lr in learning_rates:
-            for bs in batch_sizes:
-                for loss in loss_types:
-                    configs.append({
-                        'model': model,
-                        'lr': lr,
-                        'bs': bs,
-                        'loss': loss,
-                        'epochs': epochs
-                    })
+    Each model receives the same hyperparameter combinations for fair comparison.
+    Tracks the overall winner across all models and configurations.
     
-    print(f"📊 Total experiments: {len(configs)}")
-    print(f"⏱️ Estimated time: {len(configs) * 3:.0f}-{len(configs) * 5:.0f} minutes")
+    Args:
+        train_df: Training data
+        val_df: Validation data (used for evaluation during search)
+        label2id: Label mapping
+        models: List of model names to compare
+        method: Training method ('frozen', 'finetune', 'peft') - single value only
+        num_combinations: Number of random hyperparameter combinations to try per model
+        hyperparameter_grid: Optional custom hyperparameter grid. If None, uses default for method
+        random_seed: Random seed for reproducibility (Controls which hyperparameter combinations 
+                    are randomly selected. Same seed = same combinations = reproducible results).
+                    All models receive identical combinations for fair comparison.
+    
+    Returns:
+        Tuple of (results_df, winner_config) where winner_config contains best model+config
+    """
+    print(f"🤖 Models: {models}")
+    print(f"🔧 Method: {method}")
+    print(f"🎯 Random combinations per model: {num_combinations}")
+    
+    # Set random seed for reproducibility
+    if random_seed is not None:
+        random.seed(random_seed)
+        np.random.seed(random_seed)
+        torch.manual_seed(random_seed)
+        print(f"🎲 Random seed: {random_seed}")
+    
+    # Select hyperparameter grid
+    if hyperparameter_grid is not None:
+        param_grid = hyperparameter_grid
+        print(f"📋 Using custom hyperparameter grid: {list(param_grid.keys())}")
+    elif method in DEFAULT_HYPERPARAMETER_GRIDS:
+        param_grid = DEFAULT_HYPERPARAMETER_GRIDS[method]
+        print(f"📋 Using default hyperparameter grid for '{method}' method")
+    else:
+        raise ValueError(f"No hyperparameter grid defined for method '{method}'. "
+                        f"Please provide a custom grid or implement default grid for this method.")
+    
+    # Generate random hyperparameter combinations
+    # Same combinations will be used for all models for fair comparison
+    param_names = list(param_grid.keys())
+    param_combinations = []
+    
+    for _ in range(num_combinations):
+        config = {param: random.choice(param_grid[param]) for param in param_names}
+        config['max_length'] = DEFAULT_MAX_LENGTH  # Always use default
+        param_combinations.append(config)
+    
+    # Total number of experiments
+    total_experiments = len(models) * num_combinations
+    print(f"📊 Total experiments: {total_experiments}")
+    print(f"⏱️  Estimated time: {total_experiments * 3:.0f}-{total_experiments * 6:.0f} minutes")
     
     results = []
+    winner_config = {'micro_f1': 0.0}  # Track overall winner
+    experiment_num = 0
     
-    for i, config in enumerate(configs, 1):
-        print(f"\n📋 Experiment {i}/{len(configs)}: {config}")
+    # Run experiments for each model with each configuration
+    for model_name in models:
+        print(f"\n🚀 Starting experiments for model: {model_name}")
         
-        # Create args object
-        class Args:
-            def __init__(self, config, mode):
-                self.model = config['model']
-                self.mode = mode  # Use the passed mode
-                self.epochs = config['epochs']
-                self.batch_size = config['bs']
-                self.max_length = 512
-                self.learning_rate = config['lr']
-                self.loss_type = config['loss']
-        
-        args = Args(config, mode)
-        
-        try:
-            start_time = time.time()
-            model, metrics, tokenizer = train_frozen_model(args.model, train_df, val_df, label2id, args)
+        for i, config in enumerate(param_combinations, 1):
+            experiment_num += 1
+            print(f"\n{'='*100}")
+            print(f"📋 Experiment {experiment_num}/{total_experiments}")
+            print(f"   Model: {model_name}")
+            print(f"   Config {i}/{num_combinations}: {config}")
+            print(f"{'='*100}")
             
-            # Store results
-            result = {
-                'experiment': i,
-                'model': config['model'],
-                'learning_rate': config['lr'],
-                'batch_size': config['bs'],
-                'loss_type': config['loss'],
-                'epochs': config['epochs'],
-                'micro_f1': metrics['micro_f1'],
-                'macro_f1': metrics['macro_f1'],
-                'accuracy': metrics['accuracy'],
-                'training_time': time.time() - start_time
-            }
-            results.append(result)
-            
-            print(f"✅ Experiment {i} completed: Micro-F1: {metrics['micro_f1']:.3f}")
-            
-        except Exception as e:
-            print(f"❌ Experiment {i} failed: {e}")
-            results.append({
-                'experiment': i,
-                'model': config['model'],
-                'learning_rate': config['lr'],
-                'batch_size': config['bs'],
-                'loss_type': config['loss'],
-                'epochs': config['epochs'],
-                'micro_f1': 0.0,
-                'macro_f1': 0.0,
-                'accuracy': 0.0,
-                'training_time': 0.0,
-                'error': str(e)
-            })
+            try:
+                start_time = time.time()
+                model, metrics, tokenizer = train_model(
+                    method, model_name, train_df, val_df, label2id, config
+                )
+                
+                # Store results
+                result = {
+                    'experiment': experiment_num,
+                    'model': model_name,
+                    'method': method,
+                    **config,  # Unpack all hyperparameters
+                    'micro_f1': metrics['micro_f1'],
+                    'macro_f1': metrics['macro_f1'],
+                    'accuracy': metrics['accuracy'],
+                    'training_time': time.time() - start_time,
+                    'status': 'success'
+                }
+                results.append(result)
+                
+                print(f"✅ Experiment {experiment_num} completed: Micro-F1: {metrics['micro_f1']:.4f}")
+                
+                # Check if this is the new winner
+                if metrics['micro_f1'] > winner_config['micro_f1']:
+                    winner_config = {
+                        'model': model_name,
+                        'method': method,
+                        'config': config,
+                        'metrics': metrics,
+                        'trained_model': model,
+                        'tokenizer': tokenizer,
+                        **config,
+                        **metrics
+                    }
+                    print(f"🏆 NEW WINNER! {model_name} with Micro-F1: {metrics['micro_f1']:.4f}")
+                
+            except Exception as e:
+                print(f"❌ Experiment {experiment_num} failed: {e}")
+                result = {
+                    'experiment': experiment_num,
+                    'model': model_name,
+                    'method': method,
+                    **config,
+                    'micro_f1': 0.0,
+                    'macro_f1': 0.0,
+                    'accuracy': 0.0,
+                    'training_time': 0.0,
+                    'status': 'failed',
+                    'error': str(e)
+                }
+                results.append(result)
     
     # Create results DataFrame
     results_df = pd.DataFrame(results)
     
     # Save results
-    results_file = f"reports/metrics/transformers/hyperparameter_comparison_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    results_file = f"reports/metrics/transformers/randomized_search_{method}_{timestamp}.csv"
     os.makedirs(os.path.dirname(results_file), exist_ok=True)
     results_df.to_csv(results_file, index=False)
     
-    # Comprehensive results analysis
-    print(f"\n🎯 HYPERPARAMETER COMPARISON RESULTS:")
-    print("=" * 100)
+    # Print comprehensive analysis
+    print_randomized_search_results(results_df, winner_config, results_file)
     
-    # Show top 10 results
-    top_results = results_df.sort_values('micro_f1', ascending=False).head(10)
-    print("🏆 TOP 10 CONFIGURATIONS:")
-    print(top_results[['model', 'learning_rate', 'batch_size', 'loss_type', 'micro_f1', 'accuracy', 'macro_f1']].to_string(index=False))
+    # TODO: Create notebook 03b_transformer_methods_comparison.ipynb to compare frozen vs finetune vs peft results
+    # TODO: Add cross-method comparison plots (performance vs training time, method strengths/weaknesses) (internal comparison - between transformers ; external comparison - between transformers and shallow models)
     
-    # Best overall result
-    best_result = results_df.loc[results_df['micro_f1'].idxmax()]
-    print(f"\n🥇 BEST OVERALL CONFIGURATION:")
-    print(f"   Model: {best_result['model']}")
-    print(f"   Learning Rate: {best_result['learning_rate']}")
-    print(f"   Batch Size: {best_result['batch_size']}")
-    print(f"   Loss Type: {best_result['loss_type']}")
-    print(f"   Micro-F1: {best_result['micro_f1']:.4f}")
-    print(f"   Accuracy: {best_result['accuracy']:.4f}")
-    print(f"   Macro-F1: {best_result['macro_f1']:.4f}")
-    print(f"   Training Time: {best_result['training_time']:.1f}s")
+    return results_df, winner_config
+
+
+def print_randomized_search_results(results_df: pd.DataFrame, winner_config: Dict[str, Any], 
+                                    results_file: str) -> None:
+    """Print comprehensive results analysis for randomized search."""
+    print(f"\n{'='*100}")
+    print("🎯 RANDOMIZED SEARCH RESULTS")
+    print(f"{'='*100}")
+    
+    # Overall winner
+    print(f"\n🥇 OVERALL WINNER:")
+    print(f"   Model: {winner_config['model']}")
+    print(f"   Method: {winner_config['method']}")
+    print(f"   Micro-F1: {winner_config['micro_f1']:.4f}")
+    print(f"   Macro-F1: {winner_config['macro_f1']:.4f}")
+    print(f"   Accuracy: {winner_config['accuracy']:.4f}")
+    print(f"\n   Hyperparameters:")
+    for key in ['learning_rate', 'batch_size', 'epochs', 'loss_type', 'weight_decay']:
+        if key in winner_config:
+            print(f"     {key}: {winner_config[key]}")
+    
+    # Top 10 configurations
+    successful_results = results_df[results_df['status'] == 'success']
+    if len(successful_results) > 0:
+        top_results = successful_results.sort_values('micro_f1', ascending=False).head(10)
+        print(f"\n🏆 TOP 10 CONFIGURATIONS:")
+        display_cols = ['model', 'learning_rate', 'batch_size', 'loss_type', 'micro_f1', 'accuracy']
+        print(top_results[display_cols].to_string(index=False))
     
     # Analysis by model
     print(f"\n📊 ANALYSIS BY MODEL:")
     for model in results_df['model'].unique():
-        model_results = results_df[results_df['model'] == model]
-        best_model_result = model_results.loc[model_results['micro_f1'].idxmax()]
-        avg_f1 = model_results['micro_f1'].mean()
-        print(f"   {model}:")
-        print(f"     Best Micro-F1: {best_model_result['micro_f1']:.4f} (LR: {best_model_result['learning_rate']}, BS: {best_model_result['batch_size']})")
-        print(f"     Average Micro-F1: {avg_f1:.4f}")
+        model_results = successful_results[successful_results['model'] == model]
+        if len(model_results) > 0:
+            best_idx = model_results['micro_f1'].idxmax()
+            best = model_results.loc[best_idx]
+            avg_f1 = model_results['micro_f1'].mean()
+            std_f1 = model_results['micro_f1'].std()
+            print(f"   {model}:")
+            print(f"     Best Micro-F1: {best['micro_f1']:.4f} (LR: {best['learning_rate']}, BS: {best['batch_size']})")
+            print(f"     Avg Micro-F1: {avg_f1:.4f} ± {std_f1:.4f}")
     
-    # Analysis by hyperparameters
-    print(f"\n📈 ANALYSIS BY HYPERPARAMETERS:")
-    print("Learning Rate Performance:")
-    lr_analysis = results_df.groupby('learning_rate')['micro_f1'].agg(['mean', 'max', 'std']).round(4)
-    print(lr_analysis.to_string())
+    # Hyperparameter analysis (only for params that exist in results)
+    print(f"\n📈 HYPERPARAMETER ANALYSIS:")
     
-    print("\nBatch Size Performance:")
-    bs_analysis = results_df.groupby('batch_size')['micro_f1'].agg(['mean', 'max', 'std']).round(4)
-    print(bs_analysis.to_string())
-    
-    print("\nLoss Type Performance:")
-    loss_analysis = results_df.groupby('loss_type')['micro_f1'].agg(['mean', 'max', 'std']).round(4)
-    print(loss_analysis.to_string())
-    
-    # Save detailed analysis
-    analysis_file = results_file.replace('.csv', '_analysis.txt')
-    with open(analysis_file, 'w') as f:
-        f.write("HYPERPARAMETER COMPARISON ANALYSIS\n")
-        f.write("=" * 50 + "\n\n")
-        f.write(f"Best Configuration:\n{best_result.to_string()}\n\n")
-        f.write("Learning Rate Analysis:\n")
-        f.write(lr_analysis.to_string() + "\n\n")
-        f.write("Batch Size Analysis:\n")
-        f.write(bs_analysis.to_string() + "\n\n")
-        f.write("Loss Type Analysis:\n")
-        f.write(loss_analysis.to_string() + "\n")
+    for param in ['learning_rate', 'batch_size', 'loss_type']:
+        if param in successful_results.columns:
+            print(f"\n{param.replace('_', ' ').title()}:")
+            analysis = successful_results.groupby(param)['micro_f1'].agg(['mean', 'max', 'std', 'count']).round(4)
+            print(analysis.to_string())
     
     print(f"\n📊 Results saved to: {results_file}")
-    print(f"📋 Detailed analysis saved to: {analysis_file}")
+    print(f"{'='*100}\n")
+
+
+def save_winner_model(winner_config: Dict[str, Any], val_df: pd.DataFrame, 
+                     label2id: Dict[str, int]) -> None:
+    """
+    Save the overall winner model from randomized search.
     
-    return results_df
+    Args:
+        winner_config: Dictionary containing winner model, config, and metrics
+        val_df: Validation dataframe for generating confusion matrix
+        label2id: Label mapping
+    """
+    if 'trained_model' not in winner_config or 'tokenizer' not in winner_config:
+        print("⚠️ Warning: No trained model found in winner config, skipping save")
+        return
+    
+    print("\n💾 Saving winner model...")
+    
+    model = winner_config['trained_model']
+    tokenizer = winner_config['tokenizer']
+    metrics = winner_config['metrics']
+    
+    # Create unique run_id for winner
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    run_id = f"{winner_config['model']}_{winner_config['method']}_winner_{timestamp}"
+    
+    # Save metrics
+    metrics_file = f"reports/metrics/transformers/{run_id}.json"
+    os.makedirs(os.path.dirname(metrics_file), exist_ok=True)
+    
+    # Add config info to metrics
+    full_metrics = {
+        **metrics,
+        'model_name': winner_config['model'],
+        'training_method': winner_config['method'],
+        'hyperparameters': {k: v for k, v in winner_config.items() 
+                          if k not in ['trained_model', 'tokenizer', 'metrics', 'config']},
+        'run_id': run_id,
+        'timestamp': timestamp
+    }
+    
+    with open(metrics_file, 'w') as f:
+        json.dump(full_metrics, f, indent=2)
+    print(f"📊 Saved winner metrics to {metrics_file}\n")
+    
+    # Save model checkpoint in HuggingFace format (method-specific)
+    winner_dir = f"models/transformers/{winner_config['method']}_winner"
+    os.makedirs(winner_dir, exist_ok=True)
+    
+    # Check if model has save_pretrained method
+    if hasattr(model, 'save_pretrained'):
+        model.save_pretrained(winner_dir)
+        tokenizer.save_pretrained(winner_dir)
+        print(f"🏆 Saved winner model checkpoint to {winner_dir}")
+    else:
+        # For custom models, save the state dict
+        torch.save(model.state_dict(), f"{winner_dir}/pytorch_model.bin")
+        tokenizer.save_pretrained(winner_dir)
+        # Also save model info
+        model_info = {
+            'model_type': type(model).__name__,
+            'model_name': winner_config['model'],
+            'training_method': winner_config['method'],
+            **full_metrics
+        }
+        with open(f"{winner_dir}/model_info.json", 'w') as f:
+            json.dump(model_info, f, indent=2)
+        print(f"🏆 Saved winner model state to {winner_dir}")
+    
+    # Generate and save confusion matrix
+    print("📈 Generating confusion matrix for winner...")
+    
+    # Get predictions on validation set
+    device = next(model.parameters()).device
+    model.eval()
+    # TODO: Compare scores on train and val sets to check for overfitting (if overfitting, adjust hyperparameters)
+
+    all_preds = []
+    all_labels = []
+    
+    # Tokenize validation data
+    val_texts = val_df['text'].tolist()
+    val_labels = [label2id[label] for label in val_df['emotion'].tolist()]
+    
+    # Create dataset and loader
+    from torch.utils.data import TensorDataset
+    encodings = tokenizer(val_texts, truncation=True, padding=True, 
+                         max_length=DEFAULT_MAX_LENGTH, return_tensors='pt')
+    dataset = TensorDataset(encodings['input_ids'], encodings['attention_mask'], 
+                           torch.tensor(val_labels))
+    loader = DataLoader(dataset, batch_size=32, shuffle=False)
+    
+    with torch.no_grad():
+        for batch in loader:
+            input_ids, attention_mask, labels = [b.to(device) for b in batch]
+            outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+            logits = outputs['logits']  # Extract logits from the output dictionary
+            preds = logits.argmax(dim=1)
+            all_preds.extend(preds.cpu().numpy())
+            all_labels.extend(labels.cpu().numpy())
+    
+    # Create confusion matrix
+    cm = confusion_matrix(all_labels, all_preds)
+    
+    # Plot confusion matrix
+    plt.figure(figsize=(10, 8))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
+                xticklabels=list(label2id.keys()),
+                yticklabels=list(label2id.keys()))
+    plt.title(f'Confusion Matrix - Winner Model\n{winner_config["model"]} ({winner_config["method"]})')
+    plt.ylabel('True Label')
+    plt.xlabel('Predicted Label')
+    
+    # Save plot
+    plot_file = f"reports/plots/transformers/{run_id}_cm_val.png"
+    os.makedirs(os.path.dirname(plot_file), exist_ok=True)
+    plt.savefig(plot_file, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"📈 Saved confusion matrix to {plot_file}")
+    print("✅ Winner model saved successfully!")
+
 
 # --------------------------------------------------------------------------------------------------------------------------------------------
 # ----------------------------------------------------------- Main Function ----------------------------------------------------------------
 def main():
-    parser = argparse.ArgumentParser(description='Train transformer models for emotion classification')
+    parser = argparse.ArgumentParser(
+        description='Train transformer models for emotion classification with randomized hyperparameter search',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Example usage:
+  # Single model with 10 random hyperparameter combinations
+  python scripts/5_train_transformer.py --model distilbert-base-uncased --mode frozen --num_combinations 10
+  
+  # Multiple models (each gets same random combinations for fair comparison)
+  python scripts/5_train_transformer.py --model distilbert-base-uncased bert-base-uncased --mode frozen --num_combinations 10
+  
+  # Custom hyperparameter grid (as JSON string)
+  python scripts/5_train_transformer.py --model distilbert-base-uncased --mode frozen --num_combinations 5 \\
+      --hyperparameter_grid '{"learning_rate": [0.0001, 0.0005], "batch_size": [8, 16], "epochs": [3, 5], "loss_type": ["weighted"]}'
+        """
+    )
+    
+    # Model and method arguments
     parser.add_argument('--model', nargs='+', default=['distilbert-base-uncased'],
                        choices=['distilbert-base-uncased', 'bert-base-uncased'],
-                       help='Transformer model(s) to use (space-separated for multiple)')
+                       help='One or more transformer models to compare (space-separated for multiple)')
     parser.add_argument('--mode', type=str, default='frozen',
                        choices=['frozen', 'finetune', 'peft'],
-                       help='Training mode')
+                       help='Training method (single value only): frozen (currently available), finetune, or peft')
+    
+    # Data paths
     parser.add_argument('--train_data', type=str, default=DEFAULT_TRAIN_DATA,
                        help='Path to training data file')
     parser.add_argument('--val_data', type=str, default=DEFAULT_VAL_DATA,
@@ -743,23 +975,28 @@ def main():
                        help='Path to test data file')
     parser.add_argument('--labels_file', type=str, default=DEFAULT_LABELS_FILE,
                        help='Path to labels file')
-    parser.add_argument('--epochs', type=int, default=DEFAULT_EPOCHS,
-                       help='Number of training epochs')
-    parser.add_argument('--batch_size', type=int, default=DEFAULT_BATCH_SIZE,
-                       help='Batch size for training')
-    parser.add_argument('--max_length', type=int, default=DEFAULT_MAX_LENGTH,
-                       help='Maximum sequence length')
-    parser.add_argument('--learning_rate', type=float, default=2e-5,
-                       help='Learning rate for optimizer')
-    parser.add_argument('--loss_type', type=str, default='weighted', 
-                       choices=['weighted', 'standard'],
-                       help='Loss function type: weighted=class weights (default), standard=no imbalance handling')
-    parser.add_argument('--compare_hyperparams', action='store_true',
-                       help='Run hyperparameter comparison for the specified model(s) and mode')
-    parser.add_argument('--quick_comparison', action='store_true',
-                       help='Run quick comparison with fewer hyperparameter combinations')
+    
+    # Randomized search configuration
+    parser.add_argument('--num_combinations', type=int, default=10,
+                       help='Number of random hyperparameter combinations to try per model')
+    parser.add_argument('--hyperparameter_grid', type=str, default=None,
+                       help='Custom hyperparameter grid as JSON string. If not provided, uses default grid for the method. '
+                            'Format: {"learning_rate": [0.0001, 0.0005], "batch_size": [8, 16], ...}')
+    parser.add_argument('--random_seed', type=int, default=42,
+                       help='Random seed for reproducibility. Controls which hyperparameter combinations are selected. '
+                            'Same seed ensures same combinations across runs.')
     
     args = parser.parse_args()
+    
+    # Parse and validate hyperparameter grid early (fail fast)
+    hyperparameter_grid = None
+    if args.hyperparameter_grid:
+        try:
+            hyperparameter_grid = json.loads(args.hyperparameter_grid)
+            print(f"Loaded custom hyperparameter grid: {list(hyperparameter_grid.keys())}")
+        except json.JSONDecodeError as e:
+            print(f"Error parsing hyperparameter_grid JSON: {e}")
+            sys.exit(1)
     
     # Check for GPU availability
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -769,7 +1006,7 @@ def main():
         print("⚠️ Warning: No GPU detected. Training will be slow on CPU.")
     
     # Fail-fast checks
-    print("🔍 Performing fail-fast checks...")
+    print("\n🔍 Performing fail-fast checks...")
     success, error_msg = fail_fast_checks(args.train_data, args.val_data, args.test_data, args.labels_file)
     if not success:
         print(f"❌ {error_msg}")
@@ -783,70 +1020,40 @@ def main():
         print(f"❌ Error loading data: {e}")
         sys.exit(1)
     
-    # Determine what to run based on arguments
-    if args.compare_hyperparams:
-        # Hyperparameter comparison mode
-        print(f"🔬 Running hyperparameter comparison for {args.mode} mode with models: {args.model}")
-        try:
-            results_df = run_hyperparameter_comparison(
-                train_df, val_df, test_df, label2id, 
-                models_to_compare=args.model,
-                quick_mode=args.quick_comparison,
-                mode=args.mode
-            )
-            print("🎉 Hyperparameter comparison completed successfully!")
-        except Exception as e:
-            print(f"❌ Error during hyperparameter comparison: {e}")
-            import traceback
-            traceback.print_exc()
-            sys.exit(1)
-    elif len(args.model) > 1:
-        # Multiple models with your specified hyperparameters
-        print(f"🤖 Training multiple models with your hyperparameters: {args.model}")
-        all_results = []
+    # Run randomized hyperparameter search
+    # Works for both single and multiple models (test_df reserved for final evaluation)
+    num_models = len(args.model)
+    print(f"\n🎲 Starting randomized search with {num_models} model(s) × {args.num_combinations} combinations")
+    
+    try:
+        results_df, winner_config = run_randomized_search(
+            train_df, val_df, label2id,
+            models=args.model,
+            method=args.mode,
+            num_combinations=args.num_combinations,
+            hyperparameter_grid=hyperparameter_grid,
+            random_seed=args.random_seed
+        )
         
-        for model_name in args.model:
-            print(f"\n🚀 Training {model_name}...")
-            try:
-                # Create args for single model
-                single_args = argparse.Namespace(**vars(args))
-                single_args.model = model_name
-                
-                if args.mode == 'frozen':
-                    model, metrics, tokenizer = train_frozen_model(model_name, train_df, val_df, label2id, single_args)
-                    save_results(model, tokenizer, metrics, model_name, args.mode, val_df, label2id)
-                    all_results.append(metrics)
-                    print(f"✅ {model_name} completed: Micro-F1: {metrics['micro_f1']:.3f}")
-                else:
-                    print(f"❌ Mode '{args.mode}' not implemented yet for {model_name}")
-            except Exception as e:
-                print(f"❌ Error training {model_name}: {e}")
+        # Save the winner model
+        save_winner_model(winner_config, val_df, label2id)
         
-        # Show comparison
-        if all_results:
-            print(f"\n🏆 MULTI-MODEL COMPARISON:")
-            for i, (model_name, result) in enumerate(zip(args.model, all_results)):
-                print(f"   {i+1}. {model_name}: Micro-F1: {result['micro_f1']:.4f}, Accuracy: {result['accuracy']:.4f}")
+        print("\n🎉 Randomized search completed successfully!")
+        print(f"🏆 Winner: {winner_config['model']} with Micro-F1: {winner_config['micro_f1']:.4f}\n")
         
-        print("🎉 All models trained successfully!")
-    else:
-        # Single model training
-        if args.mode == 'frozen':
-            try:
-                single_args = argparse.Namespace(**vars(args))
-                single_args.model = args.model[0]  # Use first model
-                
-                model, metrics, tokenizer = train_frozen_model(args.model[0], train_df, val_df, label2id, single_args)
-                save_results(model, tokenizer, metrics, args.model[0], args.mode, val_df, label2id)
-                print("🎉 Training completed successfully!")
-            except Exception as e:
-                print(f"❌ Error during training: {e}")
-                import traceback
-                traceback.print_exc()
-                sys.exit(1)
-        else:
-            print(f"❌ Mode '{args.mode}' not implemented yet. Only 'frozen' mode is available.")
-            sys.exit(1)
+        # TODO: Do the followings, make sure it's consistent with shallow models implementation
+        # TODO: Retrain the winner model on the train&val sets 
+        # TODO: Evaluate on test set
+        # TODO: Save the winner model on the test set
+        # TODO: Generate test set confusion matrix and metrics for winner (and save)
+        # TODO: Compare test vs validation performance to check for overfitting
+
+    # TODO: "frozen" method - try to improve performance
+        
+    except Exception as e:
+        print(f"❌ Error during randomized search: {e}")
+        traceback.print_exc()
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
