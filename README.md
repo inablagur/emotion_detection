@@ -22,14 +22,14 @@ We use the **Kaggle “Emotion”** dataset (28 k samples, 6 labels - anger; fea
 emotion_detection/        
 │
 ├── data/                                               ← All raw & split datasets
-│   ├── original/                                       ← Raw dataset files
-│   │   ├── train.csv                                   ← Training examples (text + emotion)                    (Output of `scripts/1_load_data.py`)
-│   │   ├── validation.csv                              ← Validation examples                                   (Output of `scripts/1_load_data.py`)
-│   │   └── test.csv                                    ← Test examples                                         (Output of `scripts/1_load_data.py`)
+│   ├── raw/                                            ← Raw dataset files
+│   │   ├── train.csv                                   ← Training examples (text, emotion, label)              (Output of `scripts/1_load_data.py`)
+│   │   ├── validation.csv                              ← Validation examples (text, emotion, label)            (Output of `scripts/1_load_data.py`)
+│   │   └── test.csv                                    ← Test examples (text, emotion, label)                  (Output of `scripts/1_load_data.py`)
 │   ├── clean/                                          ← Preprocessed dataset files
-│   │   ├── train_clean.csv                             ← Preprocessed Training examples (text + emotion)       (Output of `scripts/2_clean_data.py`)
-│   │   ├── validation_clean.csv                        ← Preprocessed Validation examples                      (Output of `scripts/2_clean_data.py`)
-│   │   └── test_clean.csv                              ← Preprocessed Test examples                            (Output of `scripts/2_clean_data.py`)
+│   │   ├── train_clean.csv                             ← Preprocessed training (text, emotion, label)          (Output of `scripts/2_clean_data.py`)
+│   │   ├── validation_clean.csv                        ← Preprocessed validation (text, emotion, label)        (Output of `scripts/2_clean_data.py`)
+│   │   └── test_clean.csv                              ← Preprocessed test (text, emotion, label)              (Output of `scripts/2_clean_data.py`)
 │   └── labels/                                         ← Label mapping files
 │       └── label2id.json                               ← Consistent class ordering mapping                     (anger:0, fear:1, joy:2, love:3, sadness:4, surprise:5)
 │
@@ -73,9 +73,16 @@ emotion_detection/
 
 
 ### 2️⃣ Transformer Fine-Tuning  
-1. **Tokenization**: `AutoTokenizer` (`bert-base-uncased`)  
-2. **Model**: `AutoModelForSequenceClassification` (+ 6-label head)  
-3. **Training**: Hugging Face `Trainer` API  
+1. **Tokenization**: `AutoTokenizer` (supports `bert-base-uncased`, `distilbert-base-uncased`)  
+2. **Training Methods**:
+   - **Frozen**: Freeze encoder, train only classification head (✅ currently available)
+   - **Full Fine-tuning**: Update all transformer weights (*coming soon*)
+   - **PEFT/LoRA**: Parameter-efficient fine-tuning (*coming soon*)
+3. **Hyperparameter Optimization**: 
+   - Randomized search across multiple models and hyperparameter combinations
+   - Custom or default hyperparameter grids (method-specific)
+   - Automatic winner selection and model saving
+4. **Training**: Custom PyTorch training loop with class weight balancing
 
 (both) **Evaluation**: train/dev/test split → accuracy, macro-F1, per-class F1
 
@@ -130,11 +137,11 @@ emotion_detection/
    # Load the emotion dataset from Hugging Face
    python scripts/1_load_data.py
    
-   # Clean and preprocess each data file individually
-   python scripts/2_clean_data.py --input-csv data/original/train.csv --output-csv data/clean/train_clean.csv
-   python scripts/2_clean_data.py --input-csv data/original/validation.csv --output-csv data/clean/validation_clean.csv
-   python scripts/2_clean_data.py --input-csv data/original/test.csv --output-csv data/clean/test_clean.csv
+   # Clean and preprocess all data files 
+   python scripts/2_clean_data.py
    
+   # Or clean a specific file
+   python scripts/2_clean_data.py --input-csv data/raw/train.csv --output-csv data/clean/train_clean.csv
    ```
 
 5. **Verify data preparation**
@@ -160,7 +167,7 @@ emotion_detection/
 - **CUDA issues**: If you encounter CUDA-related errors, the project will fall back to CPU training. CUDA is optional but recommended for faster transformer training
 - **Memory issues**: For large models, consider reducing batch size in training scripts
 - **Dataset download**: First run may take time to download the emotion dataset from Hugging Face
-- **Data cleaning errors**: Ensure input CSV files exist in `data/original/` before running cleaning scripts
+- **Data cleaning errors**: Ensure input CSV files exist in `data/raw/` before running cleaning scripts
 ---
 
 ## 📍 Roadmap & Status

@@ -1,6 +1,6 @@
 # Ignore created data files (but preserve directory structure)
-data/original/*
-!data/original/.gitkeep
+data/raw/*
+!data/raw/.gitkeep
 data/clean/*
 !data/clean/.gitkeep
 data/labels/*
