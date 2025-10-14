@@ -1,11 +1,20 @@
-# Ignore tasks and status notes
-what to do.md
+# Ignore created data files (but preserve directory structure)
+data/raw/*
+!data/raw/.gitkeep
+data/clean/*
+!data/clean/.gitkeep
+data/labels/*
+!data/labels/.gitkeep
 
-# Ignore created data files
-data/*
+# Ignore saved models and reports (but preserve directory structure)  
+models/transformers/*
+!models/transformers/.gitkeep
+!models/transformers/transformer_winner/.gitkeep
 
-# keep the folder and its .gitkeep
-!data/.gitkeep
+reports/metrics/transformers/*
+!reports/metrics/transformers/.gitkeep
+reports/plots/transformers/*
+!reports/plots/transformers/.gitkeep
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

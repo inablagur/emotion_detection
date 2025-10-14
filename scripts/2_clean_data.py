@@ -1,10 +1,10 @@
 # --------------------------------------------------------------------------------------------------------------------------------------------
 # ------------------------------------------------------------- Import Packages --------------------------------------------------------------
+import argparse
+import contractions
 import pandas as pd
 import re
-import contractions
-import argparse
-import pandas as pd
+import sys
 from pathlib import Path
 
 # --------------------------------------------------------------------------------------------------------------------------------------------
@@ -12,6 +12,8 @@ from pathlib import Path
 MIN_NUM_CHARACHTERS = 15     # Minimum number of characters in a text row to be considered valid. Decided based on the observations in "notebooks/01_data_exploration.ipynb".
 MAX_NUM_CHARACHTERS = 300    # Maximum number of characters in a text row to be considered valid. Decided based on the observations in "notebooks/01_data_exploration.ipynb".
 TEXT_COLUMN_NAME = 'text'    # Default name of the text column in the DataFrame. This is the column that will be cleaned.
+INPUT_DIR = "data/raw"       # Default directory to read the CSV files from.
+OUTPUT_DIR = "data/clean"    # Default directory to save the cleaned CSV files.
 
 # Mapping of regex → replacement - Relevant to the specific dataset, based on the observations in "notebooks/01_data_exploration.ipynb".
 INFORMAL_CONTRACTION_MAP = {
@@ -238,47 +240,71 @@ class CleanPipeline:
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(
-        description="Clean text data via CleanPipeline (batch mode) and saves to a new .csv file"
+        description="Clean text data via CleanPipeline. Processes all files in data/raw/ or a specific file."
     )
 
-    # Mutually exclusive input: either a CSV or a single string
-    # group = parser.add_mutually_exclusive_group(required=True)
     parser.add_argument(
         "--input-csv", "-i",
-        required=True,
-        help="Path to input CSV file (must have a text column)."
+        required=False,
+        default=None,
+        help="Path to input CSV file. If not provided, processes all CSV files in data/raw/"
     )
 
     parser.add_argument(
         "--output-csv", "-o",
-        help="Path to write cleaned CSV. If omitted, writes next to input-csv with '_clean' suffix.",
+        help="Path to write cleaned CSV. If omitted, saves to data/clean/ with original filename + '_clean' suffix.",
         default=None
     )
 
     args = parser.parse_args()
 
-    # Instantiate pipeline with user-specified length bounds
+    # Instantiate pipeline
     pipe = CleanPipeline()
 
-    # Read the CSV
-    df = pd.read_csv(args.input_csv)
-    
-    # Clean it
-    cleaned = pipe.clean_df(df) 
-    
-    # Determine output path (if no output path is provided)
-    in_path = Path(args.input_csv)
-    if args.output_csv:
-        out_path = Path(args.output_csv)
-        # Ensure .csv suffix
-        if out_path.suffix.lower() != ".csv":
-            out_path = out_path.with_suffix(".csv")
+    # Determine which files to process
+    if args.input_csv:
+        # Single file mode
+        input_files = [Path(args.input_csv)]
+        print(f"📄 Processing single file: {args.input_csv}")
     else:
-        out_path = in_path.parent / f"{in_path.stem}_clean{in_path.suffix}"
-
-    # Make sure parent exists
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Save to CSV
-    cleaned.to_csv(out_path, index=False)
-    print(f"✅ Cleaned CSV written to: {out_path.resolve()}")      # Print success message
+        # Batch mode - process all CSV files in data/raw/
+        raw_dir = Path(INPUT_DIR)
+        if not raw_dir.exists():
+            print(f"❌ Error: {raw_dir} directory does not exist")
+            print("   Please run 'python scripts/1_load_data.py' first")
+            sys.exit(1)
+        
+        input_files = list(raw_dir.glob("*.csv"))
+        if not input_files:
+            print(f"❌ Error: No CSV files found in {raw_dir}")
+            sys.exit(1)
+        
+        print(f"📂 Processing all files in {raw_dir}:")
+        for f in input_files:
+            print(f"   - {f.name}")
+    
+    # Process each file
+    for in_path in input_files:
+        print(f"\n🔄 Cleaning {in_path.name}...")
+        
+        # Read the CSV
+        df = pd.read_csv(in_path)
+        
+        # Clean it
+        cleaned = pipe.clean_df(df)
+        
+        # Determine output path
+        if args.output_csv and len(input_files) == 1:
+            # Single file with specified output
+            out_path = Path(args.output_csv)
+        else:
+            # Save to data/clean/ with _clean suffix
+            clean_dir = Path(OUTPUT_DIR)
+            clean_dir.mkdir(parents=True, exist_ok=True)
+            out_path = clean_dir / f"{in_path.stem}_clean.csv"
+        
+        # Save to CSV
+        cleaned.to_csv(out_path, index=False)
+        print(f"✅ Cleaned CSV written to: {out_path.resolve()}")
+    
+    print(f"\n🎉 All files cleaned successfully!")
