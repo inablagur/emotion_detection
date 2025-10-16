@@ -5,11 +5,21 @@ data/clean/*
 !data/clean/.gitkeep
 data/labels/*
 !data/labels/.gitkeep
+data/labels/*.json
 
 # Ignore saved models and reports (but preserve directory structure)  
 models/transformers/*
 !models/transformers/.gitkeep
-!models/transformers/transformer_winner/.gitkeep
+!models/transformers/frozen_winner/
+!models/transformers/finetune_winner/
+!models/transformers/peft_winner/
+# But ignore all files inside winner directories (keep structure, not content)
+models/transformers/frozen_winner/*
+!models/transformers/frozen_winner/.gitkeep
+models/transformers/finetune_winner/*
+!models/transformers/finetune_winner/.gitkeep
+models/transformers/peft_winner/*
+!models/transformers/peft_winner/.gitkeep
 
 reports/metrics/transformers/*
 !reports/metrics/transformers/.gitkeep

@@ -44,6 +44,26 @@ DEFAULT_MAX_LENGTH = 512
 DEFAULT_BATCH_SIZE = 16
 DEFAULT_EPOCHS = 5
 
+# Obligatory CSV columns - these must always exist in results CSV files
+# Column names are fixed and cannot be changed. Values can be null/NaN if not available.
+OBLIGATORY_CSV_COLUMNS = [
+    'experiment',           # Sequential experiment number
+    'model',               # Model name (e.g., distilbert-base-uncased)
+    'method',              # Training method (frozen, finetune, peft)
+    'learning_rate',       # Learning rate hyperparameter
+    'batch_size',          # Batch size hyperparameter
+    'epochs',              # Number of epochs hyperparameter
+    'loss_type',           # Loss function type (weighted, standard)
+    'weight_decay',        # L2 regularization weight
+    'max_length',          # Token sequence max length
+    'val_micro_f1',        # Validation set micro-averaged F1 (primary metric)
+    'val_macro_f1',        # Validation set macro-averaged F1
+    'val_accuracy',        # Validation set accuracy
+    'training_time',       # Total training time in seconds
+    'status',              # Experiment status (success, failed)
+    'is_winner',           # Boolean: True if this is the best experiment in this search
+]
+
 # Default hyperparameter grids for randomized search
 # Currently only 'frozen' method is implemented
 # When adding new methods (finetune, peft), define their grids here with appropriate ranges
@@ -175,7 +195,7 @@ class FrozenEmotionClassifier(nn.Module):
         
         # Classification head - start with linear head
         # TODO: Experiment with MLP head architecture (Linear→GELU→Dropout→Linear) for better performance
-        # TODO: Make head architecture configurable via hyperparameter grid
+        # TODO: Optional: Make head architecture configurable via hyperparameter grid
         self.classifier = nn.Linear(self.config.hidden_size, num_labels)
         self.dropout = nn.Dropout(hidden_dropout_prob)
         
@@ -324,14 +344,14 @@ def train_frozen_model(model_name: str, train_df: pd.DataFrame, val_df: pd.DataF
     # Create datasets
     train_dataset = EmotionDataset(
         train_df['text'].tolist(),
-        [label2id[label] for label in train_df['emotion']],
+        train_df['label'].tolist(),
         tokenizer,
         max_length=args.max_length
     )
     
     val_dataset = EmotionDataset(
         val_df['text'].tolist(),
-        [label2id[label] for label in val_df['emotion']],
+        val_df['label'].tolist(),
         tokenizer,
         max_length=args.max_length
     )
@@ -355,6 +375,7 @@ def train_frozen_model(model_name: str, train_df: pd.DataFrame, val_df: pd.DataF
     best_val_f1 = 0
     patience_counter = 0
     early_stopping_patience = 3
+    # TODO: Add optional early_stopping and value (either to the grid search or as an individual argument)
     
     print(f"🏃‍♂️ Starting training for {args.epochs} epochs...\n")
     training_start = time.time()
@@ -390,7 +411,7 @@ def train_frozen_model(model_name: str, train_df: pd.DataFrame, val_df: pd.DataF
         val_predictions = []
         val_labels = []
         
-        with torch.no_grad():
+        with torch.no_grad(): # Don't compute gradients (faster, saves memory)
             for batch in val_loader:
                 input_ids = batch['input_ids'].to(device)
                 attention_mask = batch['attention_mask'].to(device)
@@ -402,9 +423,14 @@ def train_frozen_model(model_name: str, train_df: pd.DataFrame, val_df: pd.DataF
                 logits = outputs['logits']
                 predictions = torch.argmax(logits, dim=1)
                 
-                val_predictions.extend(predictions.cpu().numpy())
-                val_labels.extend(labels.cpu().numpy())
+                val_predictions.extend(predictions.cpu().numpy())  # Convert to cpu + numpy array to allow scikit-learn evaluation
+                val_labels.extend(labels.cpu().numpy()) # Convert to cpu + numpy array to allow scikit-learn evaluation
         
+        # Save predictions for final metrics calculation
+        last_val_predictions = val_predictions
+        last_val_labels = val_labels
+        
+        # Calculate only metrics needed for early stopping and progress tracking
         val_accuracy = accuracy_score(val_labels, val_predictions)
         val_micro_f1 = f1_score(val_labels, val_predictions, average='micro')
         avg_val_loss = val_loss / len(val_loader)
@@ -423,29 +449,13 @@ def train_frozen_model(model_name: str, train_df: pd.DataFrame, val_df: pd.DataF
             print(f"⏹️ Early stopping at epoch {epoch+1}")
             break
     
-    # Final evaluation
-    model.eval()
-    final_predictions = []
-    final_labels = []
+    # Calculate additional validation metrics once (using last epoch's predictions)
+    print("\n📊 Calculating final validation metrics...")
+    val_accuracy = accuracy_score(last_val_labels, last_val_predictions)
+    val_micro_f1 = f1_score(last_val_labels, last_val_predictions, average='micro')
+    val_macro_f1 = f1_score(last_val_labels, last_val_predictions, average='macro')
+    val_weighted_f1 = f1_score(last_val_labels, last_val_predictions, average='weighted')
     
-    with torch.no_grad():
-        for batch in val_loader:
-            input_ids = batch['input_ids'].to(device)
-            attention_mask = batch['attention_mask'].to(device)
-            labels = batch['labels'].to(device)
-            
-            outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
-            logits = outputs['logits']
-            predictions = torch.argmax(logits, dim=1)
-            
-            final_predictions.extend(predictions.cpu().numpy())
-            final_labels.extend(labels.cpu().numpy())
-    
-    # Calculate metrics
-    accuracy = accuracy_score(final_labels, final_predictions)
-    micro_f1 = f1_score(final_labels, final_predictions, average='micro')
-    macro_f1 = f1_score(final_labels, final_predictions, average='macro')
-    weighted_f1 = f1_score(final_labels, final_predictions, average='weighted')
     
     total_time = time.time() - start_time
     training_time = time.time() - training_start
@@ -453,119 +463,29 @@ def train_frozen_model(model_name: str, train_df: pd.DataFrame, val_df: pd.DataF
     metrics = {
         'model': model_name,
         'mode': args.mode,
-        'accuracy': accuracy,
-        'micro_f1': micro_f1,  # PRIMARY metric for imbalanced data
-        'macro_f1': macro_f1,  # Shows per-class performance
-        'weighted_f1': weighted_f1,  # Weighted by class frequency
+        # Validation metrics (primary for model selection)
+        'val_accuracy': val_accuracy,
+        'val_micro_f1': val_micro_f1,  # PRIMARY metric for imbalanced data
+        'val_macro_f1': val_macro_f1,
+        'val_weighted_f1': val_weighted_f1,
+        # Other info
         'loss': avg_val_loss,
         'epochs_trained': epoch + 1,
         'total_time_seconds': total_time,
         'training_time_seconds': training_time,
         'classification_report': classification_report(
-            final_labels, final_predictions, 
+            last_val_labels, last_val_predictions, 
             target_names=list(label2id.keys()),
             output_dict=True
         )
     }
     
     print(f"✅ Training completed in {total_time:.1f}s (training: {training_time:.1f}s)")
-    print(f"📊 Final Metrics - Accuracy: {accuracy:.3f}, Micro-F1: {micro_f1:.3f}, Macro-F1: {macro_f1:.3f}")
+    print(f"📊 Validation Metrics - Accuracy: {val_accuracy:.3f}, Micro-F1: {val_micro_f1:.3f}, Macro-F1: {val_macro_f1:.3f}")
     
     return model, metrics, tokenizer
 
-def save_results(model, tokenizer, metrics: Dict[str, Any], model_name: str, mode: str, 
-                val_df: pd.DataFrame, label2id: Dict[str, int]):
-    """Save metrics, plots, and checkpoints - OPTIMIZED file operations."""
-    
-    print("💾 Saving results...")
-    save_start = time.time()
-    
-    # Create run ID for file naming
-    run_id = f"{model_name.replace('/', '_')}_{mode}"
-    
-    # Save metrics JSON
-    metrics_file = f"reports/metrics/transformers/{run_id}_val.json"
-    os.makedirs(os.path.dirname(metrics_file), exist_ok=True)
-    
-    with open(metrics_file, 'w') as f:
-        json.dump(metrics, f, indent=2)
-    print(f"Saved metrics to {metrics_file}")
-    
-    # Check if this is the best model so far
-    winner_file = "reports/metrics/transformers/transformer_winner.json"
-    is_best = False
-    
-    if os.path.exists(winner_file):
-        with open(winner_file, 'r') as f:
-            winner_metrics = json.load(f)
-        # Use micro-F1 as primary metric for imbalanced datasets
-        if metrics['micro_f1'] > winner_metrics.get('micro_f1', 0):
-            is_best = True
-    else:
-        is_best = True
-    
-    if is_best:
-        # Update winner metrics
-        with open(winner_file, 'w') as f:
-            json.dump(metrics, f, indent=2)
-        print(f"New best model! Updated {winner_file}")
-        
-        # Save winner checkpoint
-        winner_dir = "models/transformers/transformer_winner"
-        os.makedirs(winner_dir, exist_ok=True)
-        
-        # Save model and tokenizer in HuggingFace format
-        model.save_pretrained(winner_dir)
-        tokenizer.save_pretrained(winner_dir)
-        print(f"🏆 Saved winner checkpoint to {winner_dir}")
-    
-    # Generate predictions for confusion matrix
-    device = next(model.parameters()).device
-    model.eval()
-    
-    val_dataset = EmotionDataset(
-        val_df['text'].tolist(),
-        [label2id[label] for label in val_df['emotion']],
-        tokenizer
-    )
-    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
-    
-    predictions = []
-    true_labels = []
-    
-    with torch.no_grad():
-        for batch in val_loader:
-            input_ids = batch['input_ids'].to(device)
-            attention_mask = batch['attention_mask'].to(device)
-            labels = batch['labels'].to(device)
-            
-            outputs = model(input_ids=input_ids, attention_mask=attention_mask)
-            logits = outputs['logits']
-            preds = torch.argmax(logits, dim=1)
-            
-            predictions.extend(preds.cpu().numpy())
-            true_labels.extend(labels.cpu().numpy())
-    
-    # Create confusion matrix plot
-    cm = confusion_matrix(true_labels, predictions)
-    plt.figure(figsize=(10, 8))
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
-                xticklabels=list(label2id.keys()),
-                yticklabels=list(label2id.keys()))
-    plt.title(f'Confusion Matrix - {model_name} ({mode})')
-    plt.xlabel('Predicted')
-    plt.ylabel('Actual')
-    plt.tight_layout()
-    
-    # Save plot
-    plot_file = f"reports/plots/transformers/{run_id}_cm_val.png"
-    os.makedirs(os.path.dirname(plot_file), exist_ok=True)
-    plt.savefig(plot_file, dpi=300, bbox_inches='tight')
-    plt.close()
-    
-    save_time = time.time() - save_start
-    print(f"📈 Saved confusion matrix to {plot_file}\n")
-    print(f"✅ Results saved in {save_time:.1f}s")
+
 
 # --------------------------------------------------------------------------------------------------------------------------------------------
 # ------------------------------------------------- Training Dispatcher & Randomized Search ------------------------------------------------
@@ -679,7 +599,7 @@ def run_randomized_search(train_df: pd.DataFrame, val_df: pd.DataFrame,
     print(f"⏱️  Estimated time: {total_experiments * 3:.0f}-{total_experiments * 6:.0f} minutes")
     
     results = []
-    winner_config = {'micro_f1': 0.0}  # Track overall winner
+    winner_config = {'val_micro_f1': 0.0}  # Track overall winner
     experiment_num = 0
     
     # Run experiments for each model with each configuration
@@ -702,22 +622,31 @@ def run_randomized_search(train_df: pd.DataFrame, val_df: pd.DataFrame,
                 
                 # Store results
                 result = {
-                    'experiment': experiment_num,
+                    'experiment': experiment_num, # Experiment identification
                     'model': model_name,
                     'method': method,
-                    **config,  # Unpack all hyperparameters
-                    'micro_f1': metrics['micro_f1'],
-                    'macro_f1': metrics['macro_f1'],
-                    'accuracy': metrics['accuracy'],
+                    # Hyperparameters
+                    'learning_rate': config.get('learning_rate', None),
+                    'batch_size': config.get('batch_size', None),
+                    'epochs': config.get('epochs', None),
+                    'loss_type': config.get('loss_type', None),
+                    'weight_decay': config.get('weight_decay', None),
+                    'max_length': config.get('max_length', None),
+                    # Validation set metrics
+                    'val_micro_f1': metrics.get('val_micro_f1', None),
+                    'val_macro_f1': metrics.get('val_macro_f1', None),
+                    'val_accuracy': metrics.get('val_accuracy', None),
+                    # Timing and status
                     'training_time': time.time() - start_time,
-                    'status': 'success'
+                    'status': 'success',
+                    'is_winner': False  # Will be updated after all experiments complete
                 }
                 results.append(result)
                 
-                print(f"✅ Experiment {experiment_num} completed: Micro-F1: {metrics['micro_f1']:.4f}")
+                print(f"✅ Experiment {experiment_num} completed: Val Micro-F1: {metrics['val_micro_f1']:.4f}")
                 
-                # Check if this is the new winner
-                if metrics['micro_f1'] > winner_config['micro_f1']:
+                # Check if this is the new winner (using validation micro-F1)
+                if metrics['val_micro_f1'] > winner_config.get('val_micro_f1', 0.0):
                     winner_config = {
                         'model': model_name,
                         'method': method,
@@ -728,20 +657,30 @@ def run_randomized_search(train_df: pd.DataFrame, val_df: pd.DataFrame,
                         **config,
                         **metrics
                     }
-                    print(f"🏆 NEW WINNER! {model_name} with Micro-F1: {metrics['micro_f1']:.4f}")
+                    print(f"🏆 NEW WINNER! {model_name} with Val Micro-F1: {metrics['val_micro_f1']:.4f}")
                 
             except Exception as e:
-                print(f"❌ Experiment {experiment_num} failed: {e}")
+                print(f"❌ Experiment {experiment_num} failed: {e}") # Store failed result with all obligatory columns (nulls for metrics)
                 result = {
-                    'experiment': experiment_num,
+                    'experiment': experiment_num,  # Experiment identification
                     'model': model_name,
                     'method': method,
-                    **config,
-                    'micro_f1': 0.0,
-                    'macro_f1': 0.0,
-                    'accuracy': 0.0,
+                    # Hyperparameters
+                    'learning_rate': config.get('learning_rate', None),
+                    'batch_size': config.get('batch_size', None),
+                    'epochs': config.get('epochs', None),
+                    'loss_type': config.get('loss_type', None),
+                    'weight_decay': config.get('weight_decay', None),
+                    'max_length': config.get('max_length', None),
+                    # Validation set metrics (null for failed experiments)
+                    'val_micro_f1': None,
+                    'val_macro_f1': None,
+                    'val_accuracy': None,
+                    # Timing and status
                     'training_time': 0.0,
                     'status': 'failed',
+                    'is_winner': False,  # Failed experiments can't be winners
+                    # Optional: error message (not in obligatory columns)
                     'error': str(e)
                 }
                 results.append(result)
@@ -749,6 +688,17 @@ def run_randomized_search(train_df: pd.DataFrame, val_df: pd.DataFrame,
     # Create results DataFrame
     results_df = pd.DataFrame(results)
     
+    # Mark the winner experiment (highest val_micro_f1)
+    if len(results_df) > 0 and 'val_micro_f1' in results_df.columns:
+        successful = results_df[results_df['status'] == 'success']
+        if len(successful) > 0 and successful['val_micro_f1'].notna().any():
+            winner_idx = successful['val_micro_f1'].idxmax()
+            results_df.at[winner_idx, 'is_winner'] = True
+            print(f"\n🏆 Winner: Experiment {results_df.loc[winner_idx, 'experiment']} "
+                  f"(Val Micro-F1: {results_df.loc[winner_idx, 'val_micro_f1']:.4f})")
+    
+    # TODO: Calculate metrics scores on the training set of the winning model as well, to check for further analysis and overfitting analysis. 
+
     # Save results
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     results_file = f"reports/metrics/transformers/randomized_search_{method}_{timestamp}.csv"
@@ -758,7 +708,7 @@ def run_randomized_search(train_df: pd.DataFrame, val_df: pd.DataFrame,
     # Print comprehensive analysis
     print_randomized_search_results(results_df, winner_config, results_file)
     
-    # TODO: Create notebook 03b_transformer_methods_comparison.ipynb to compare frozen vs finetune vs peft results
+    # TODO: Create notebook compare frozen vs finetune vs peft best results
     # TODO: Add cross-method comparison plots (performance vs training time, method strengths/weaknesses) (internal comparison - between transformers ; external comparison - between transformers and shallow models)
     
     return results_df, winner_config
@@ -775,9 +725,9 @@ def print_randomized_search_results(results_df: pd.DataFrame, winner_config: Dic
     print(f"\n🥇 OVERALL WINNER:")
     print(f"   Model: {winner_config['model']}")
     print(f"   Method: {winner_config['method']}")
-    print(f"   Micro-F1: {winner_config['micro_f1']:.4f}")
-    print(f"   Macro-F1: {winner_config['macro_f1']:.4f}")
-    print(f"   Accuracy: {winner_config['accuracy']:.4f}")
+    print(f"   Val Micro-F1: {winner_config.get('val_micro_f1', 0):.4f}")
+    print(f"   Val Macro-F1: {winner_config.get('val_macro_f1', 0):.4f}")
+    print(f"   Val Accuracy: {winner_config.get('val_accuracy', 0):.4f}")
     print(f"\n   Hyperparameters:")
     for key in ['learning_rate', 'batch_size', 'epochs', 'loss_type', 'weight_decay']:
         if key in winner_config:
@@ -786,31 +736,32 @@ def print_randomized_search_results(results_df: pd.DataFrame, winner_config: Dic
     # Top 10 configurations
     successful_results = results_df[results_df['status'] == 'success']
     if len(successful_results) > 0:
-        top_results = successful_results.sort_values('micro_f1', ascending=False).head(10)
+        top_results = successful_results.sort_values('val_micro_f1', ascending=False).head(10)
         print(f"\n🏆 TOP 10 CONFIGURATIONS:")
-        display_cols = ['model', 'learning_rate', 'batch_size', 'loss_type', 'micro_f1', 'accuracy']
-        print(top_results[display_cols].to_string(index=False))
+        display_cols = ['model', 'learning_rate', 'batch_size', 'loss_type', 'val_micro_f1', 'val_accuracy']
+        if all(col in top_results.columns for col in display_cols):
+            print(top_results[display_cols].to_string(index=False))
     
     # Analysis by model
     print(f"\n📊 ANALYSIS BY MODEL:")
     for model in results_df['model'].unique():
         model_results = successful_results[successful_results['model'] == model]
-        if len(model_results) > 0:
-            best_idx = model_results['micro_f1'].idxmax()
+        if len(model_results) > 0 and 'val_micro_f1' in model_results.columns:
+            best_idx = model_results['val_micro_f1'].idxmax()
             best = model_results.loc[best_idx]
-            avg_f1 = model_results['micro_f1'].mean()
-            std_f1 = model_results['micro_f1'].std()
+            avg_f1 = model_results['val_micro_f1'].mean()
+            std_f1 = model_results['val_micro_f1'].std()
             print(f"   {model}:")
-            print(f"     Best Micro-F1: {best['micro_f1']:.4f} (LR: {best['learning_rate']}, BS: {best['batch_size']})")
-            print(f"     Avg Micro-F1: {avg_f1:.4f} ± {std_f1:.4f}")
+            print(f"     Best Val Micro-F1: {best['val_micro_f1']:.4f} (LR: {best['learning_rate']}, BS: {best['batch_size']})")
+            print(f"     Avg Val Micro-F1: {avg_f1:.4f} ± {std_f1:.4f}")
     
     # Hyperparameter analysis (only for params that exist in results)
     print(f"\n📈 HYPERPARAMETER ANALYSIS:")
     
     for param in ['learning_rate', 'batch_size', 'loss_type']:
-        if param in successful_results.columns:
+        if param in successful_results.columns and 'val_micro_f1' in successful_results.columns:
             print(f"\n{param.replace('_', ' ').title()}:")
-            analysis = successful_results.groupby(param)['micro_f1'].agg(['mean', 'max', 'std', 'count']).round(4)
+            analysis = successful_results.groupby(param)['val_micro_f1'].agg(['mean', 'max', 'std', 'count']).round(4)
             print(analysis.to_string())
     
     print(f"\n📊 Results saved to: {results_file}")
@@ -836,10 +787,12 @@ def save_winner_model(winner_config: Dict[str, Any], val_df: pd.DataFrame,
     model = winner_config['trained_model']
     tokenizer = winner_config['tokenizer']
     metrics = winner_config['metrics']
+    method = winner_config['method']
     
     # Create unique run_id for winner
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    run_id = f"{winner_config['model']}_{winner_config['method']}_winner_{timestamp}"
+    model_name_clean = winner_config['model'].replace('/', '_')
+    run_id = f"{model_name_clean}_{method}_winner_{timestamp}"
     
     # Save metrics
     metrics_file = f"reports/metrics/transformers/{run_id}.json"
@@ -849,7 +802,7 @@ def save_winner_model(winner_config: Dict[str, Any], val_df: pd.DataFrame,
     full_metrics = {
         **metrics,
         'model_name': winner_config['model'],
-        'training_method': winner_config['method'],
+        'training_method': method,
         'hyperparameters': {k: v for k, v in winner_config.items() 
                           if k not in ['trained_model', 'tokenizer', 'metrics', 'config']},
         'run_id': run_id,
@@ -860,20 +813,48 @@ def save_winner_model(winner_config: Dict[str, Any], val_df: pd.DataFrame,
         json.dump(full_metrics, f, indent=2)
     print(f"📊 Saved winner metrics to {metrics_file}\n")
     
-    # Save model checkpoint in HuggingFace format (method-specific)
-    winner_dir = f"models/transformers/{winner_config['method']}_winner"
-    os.makedirs(winner_dir, exist_ok=True)
+    # Check if we should update the winner checkpoint (compare with existing winner, if any)
+    winner_dir = f"models/transformers/{method}_winner"
+    winner_info_file = f"{winner_dir}/model_info.json"
+    should_save_checkpoint = True
     
-    # Check if model has save_pretrained method
-    if hasattr(model, 'save_pretrained'):
-        model.save_pretrained(winner_dir)
-        tokenizer.save_pretrained(winner_dir)
-        print(f"🏆 Saved winner model checkpoint to {winner_dir}")
+    if os.path.exists(winner_info_file):
+        try:
+            with open(winner_info_file, 'r') as f:
+                existing_winner = json.load(f)
+            existing_f1 = existing_winner.get('val_micro_f1', 0.0)
+            new_f1 = metrics['val_micro_f1']
+            
+            if new_f1 > existing_f1:
+                print(f"🎉 New winner beats existing winner! ({new_f1:.4f} > {existing_f1:.4f})")
+                should_save_checkpoint = True
+            else:
+                print(f"⚠️  New winner ({new_f1:.4f}) does NOT beat existing winner ({existing_f1:.4f})")
+                print(f"   Keeping existing checkpoint in {winner_dir}")
+                should_save_checkpoint = False
+        except Exception as e:
+            print(f"⚠️  Could not read existing winner info: {e}")
+            print(f"   Will overwrite with new winner")
+            should_save_checkpoint = True
     else:
-        # For custom models, save the state dict
-        torch.save(model.state_dict(), f"{winner_dir}/pytorch_model.bin")
-        tokenizer.save_pretrained(winner_dir)
-        # Also save model info
+        print(f"✨ No existing winner found - saving first winner checkpoint")
+        should_save_checkpoint = True
+    
+    # Save model checkpoint only if it's better than existing
+    if should_save_checkpoint:
+        os.makedirs(winner_dir, exist_ok=True)
+        
+        # Check if model has save_pretrained method
+        if hasattr(model, 'save_pretrained'):
+            model.save_pretrained(winner_dir)
+            tokenizer.save_pretrained(winner_dir)
+            print(f"🏆 Saved winner model checkpoint to {winner_dir}")
+        else:
+            # For custom models, save the state dict
+            torch.save(model.state_dict(), f"{winner_dir}/pytorch_model.bin")
+            tokenizer.save_pretrained(winner_dir)
+        
+        # Always save model info (for comparison in future runs)
         model_info = {
             'model_type': type(model).__name__,
             'model_name': winner_config['model'],
@@ -882,7 +863,7 @@ def save_winner_model(winner_config: Dict[str, Any], val_df: pd.DataFrame,
         }
         with open(f"{winner_dir}/model_info.json", 'w') as f:
             json.dump(model_info, f, indent=2)
-        print(f"🏆 Saved winner model state to {winner_dir}")
+        print(f"✅ Updated winner checkpoint with Val Micro-F1: {metrics['val_micro_f1']:.4f}")
     
     # Generate and save confusion matrix
     print("📈 Generating confusion matrix for winner...")
@@ -890,14 +871,13 @@ def save_winner_model(winner_config: Dict[str, Any], val_df: pd.DataFrame,
     # Get predictions on validation set
     device = next(model.parameters()).device
     model.eval()
-    # TODO: Compare scores on train and val sets to check for overfitting (if overfitting, adjust hyperparameters)
-
+    
     all_preds = []
     all_labels = []
     
     # Tokenize validation data
     val_texts = val_df['text'].tolist()
-    val_labels = [label2id[label] for label in val_df['emotion'].tolist()]
+    val_labels = val_df['label'].tolist()
     
     # Create dataset and loader
     from torch.utils.data import TensorDataset
@@ -907,14 +887,14 @@ def save_winner_model(winner_config: Dict[str, Any], val_df: pd.DataFrame,
                            torch.tensor(val_labels))
     loader = DataLoader(dataset, batch_size=32, shuffle=False)
     
-    with torch.no_grad():
+    with torch.no_grad(): # Don't compute gradients (faster, saves memory)
         for batch in loader:
             input_ids, attention_mask, labels = [b.to(device) for b in batch]
             outputs = model(input_ids=input_ids, attention_mask=attention_mask)
             logits = outputs['logits']  # Extract logits from the output dictionary
             preds = logits.argmax(dim=1)
-            all_preds.extend(preds.cpu().numpy())
-            all_labels.extend(labels.cpu().numpy())
+            all_preds.extend(preds.cpu().numpy())  # Convert to cpu + numpy array to allow scikit-learn evaluation
+            all_labels.extend(labels.cpu().numpy())  # Convert to cpu + numpy array to allow scikit-learn evaluation
     
     # Create confusion matrix
     cm = confusion_matrix(all_labels, all_preds)
@@ -924,7 +904,7 @@ def save_winner_model(winner_config: Dict[str, Any], val_df: pd.DataFrame,
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
                 xticklabels=list(label2id.keys()),
                 yticklabels=list(label2id.keys()))
-    plt.title(f'Confusion Matrix - Winner Model\n{winner_config["model"]} ({winner_config["method"]})')
+    plt.title(f'Confusion Matrix - Winner Model\n{winner_config["model"]} ({method})')
     plt.ylabel('True Label')
     plt.xlabel('Predicted Label')
     
@@ -1039,9 +1019,10 @@ Example usage:
         save_winner_model(winner_config, val_df, label2id)
         
         print("\n🎉 Randomized search completed successfully!")
-        print(f"🏆 Winner: {winner_config['model']} with Micro-F1: {winner_config['micro_f1']:.4f}\n")
+        print(f"🏆 Winner: {winner_config['model']} with Val Micro-F1: {winner_config.get('val_micro_f1', 0):.4f}\n")
         
-        # TODO: Do the followings, make sure it's consistent with shallow models implementation
+        # TODO: Do the followings:
+        # TODO: make sure it's consistent with shallow models implementation
         # TODO: Retrain the winner model on the train&val sets 
         # TODO: Evaluate on test set
         # TODO: Save the winner model on the test set

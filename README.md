@@ -45,10 +45,19 @@ emotion_detection/
 │   └── 04_compare_shallow_vs_transformers.ipynb        ← Compare best shallow vs transformer models (performance, efficiency, trade-offs)
 │                                                       
 ├── reports/                                            ← JSON reports and interpretation files for each trained model
-│   └── transformers/                                   ← Transformer model reports and results
+│   ├── metrics/
+│   │   └── transformers/                               ← Transformer metrics and search results
+│   │       ├── {model}_{mode}_winner_{timestamp}.json  ← Winner model detailed metrics
+│   │       └── randomized_search_{mode}_{timestamp}.csv ← Complete hyperparameter search results (all experiments)
+│   └── plots/
+│       └── transformers/                               ← Transformer confusion matrices and visualizations
+│           └── {model}_{mode}_winner_{timestamp}_cm_val.png ← Confusion matrix for winner model
 │
 ├── models/                                             ← Saved model checkpoints (populates later)
-│   └── transformers/                                   ← Transformer model checkpoints and saved models
+│   └── transformers/                                   ← Transformer model checkpoints (only winners saved to save disk space)
+│       ├── frozen_winner/                              ← Best frozen training model
+│       ├── finetune_winner/                            ← Best full fine-tuning model (coming soon)
+│       └── peft_winner/                                ← Best PEFT/LoRA model (coming soon)
 │
 ├── README.md                                           ← High-level overview, setup, and workflow
 ├── requirements.txt                                    ← Pinned dependencies (Python 3.10)
