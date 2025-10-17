@@ -65,18 +65,34 @@ OBLIGATORY_CSV_COLUMNS = [
 ]
 
 # Default hyperparameter grids for randomized search
-# Currently only 'frozen' method is implemented
-# When adding new methods (finetune, peft), define their grids here with appropriate ranges
+# Currently 'frozen' and 'peft' methods are implemented
+# When adding new methods (finetune), define their grids here with appropriate ranges
 DEFAULT_HYPERPARAMETER_GRIDS = {
     'frozen': {
         'learning_rate': [1e-4, 2e-4, 5e-4, 1e-3, 2e-3],  # Higher LR since only training head
-        'batch_size': [8, 16, 32],
+        'batch_size': [8, 16, 32],   # Higher batch size isn't worth the memory usage. The current size is enough for this dataset size
         'epochs': [3, 4, 5, 6],
         'loss_type': ['weighted', 'standard'],
-        'weight_decay': [0.0, 0.01, 0.05, 0.1]  # L2 regularization
+        'weight_decay': [0.0, 0.01, 0.05, 0.1]  # L2 regularization. Includes higher values to avoid potential overfitting (due to small number of trainable parameters)
+    },
+    'peft': {
+        # Standard hyperparameters
+        'learning_rate': [1e-4, 2e-4, 5e-4],  # *Lower than frozen - training more parameters
+        'batch_size': [8, 16, 32],  # Higher batch size isn't worth the memory usage. The current size is enough for this dataset size
+        'epochs': [3, 5, 7],  # May need more epochs than frozen
+        'loss_type': ['weighted', 'standard'],
+        'weight_decay': [0.0, 0.01],  # Include only lower values since it less prones to overfit 
+        
+        # LoRA-specific hyperparameters
+        'lora_r': [4, 8, 16, 32],  # Rank: low (4-8) for efficiency, high (16-32) for expressiveness
+        'lora_alpha': [8, 16, 32],  # Scaling factor (typically 1-2x the rank)
+        'lora_dropout': [0.05, 0.1],  # Dropout for LoRA layers (regularization)
+        
+        # Note: lora_target_modules is FIXED to ['query', 'value'] (standard approach)
+        # TODO: If results are not satisfactory, consider testing more aggressive target modules (and decide whether to implement them in the grid search or someplace else):
+        #       ['query', 'key', 'value', 'dense'] for ~2x more trainable parameters at cost of slower training
     }
     # 'finetune': {...}  # To be added when implementing full fine-tuning
-    # 'peft': {...}      # To be added when implementing PEFT/LoRA
 }
 
 def fail_fast_checks(train_data: str, val_data: str, test_data: str, labels_file: str) -> Tuple[bool, str]:
