@@ -21,11 +21,8 @@ from sklearn.metrics import classification_report, confusion_matrix, accuracy_sc
 from sklearn.utils.class_weight import compute_class_weight
 import matplotlib.pyplot as plt
 import seaborn as sns
-from transformers import (
-    AutoTokenizer, 
-    AutoModel, 
-    AutoConfig
-)
+from transformers import AutoTokenizer, AutoModel, AutoConfig
+from peft import LoraConfig, get_peft_model, TaskType
 
 from datetime import datetime
 import time
@@ -283,6 +280,154 @@ class FrozenEmotionClassifier(nn.Module):
                 'created_at': datetime.now().isoformat()
             }, f, indent=2)
         print(f"✅ Model saved successfully\n")
+
+
+class PEFTEmotionClassifier(nn.Module):
+    """
+    Emotion classifier using PEFT (LoRA) for parameter-efficient fine-tuning.
+    Applies LoRA to attention layers while keeping most of the model frozen.
+    Only LoRA adapters and classification head learn during training.
+    Handles imbalanced data.
+    """
+    
+    def __init__(self, model_name: str, num_labels: int, 
+                 lora_r: int = 8, lora_alpha: int = 16, lora_dropout: float = 0.1,
+                 lora_target_modules: list = None,
+                 hidden_dropout_prob: float = 0.1, 
+                 class_weights=None):
+        """
+        Initialize PEFT emotion classifier with LoRA.
+        
+        Args:
+            model_name: HuggingFace model name (e.g., 'distilbert-base-uncased')
+            num_labels: Number of emotion classes
+            lora_r: LoRA rank (controls adapter capacity)
+            lora_alpha: LoRA scaling factor
+            lora_dropout: Dropout probability for LoRA layers
+            lora_target_modules: Which modules to apply LoRA to (default: ['query', 'value'])
+            hidden_dropout_prob: Dropout for classification head
+            class_weights: Optional class weights for imbalanced data
+        """
+        super().__init__()
+        
+        # Load base model and config
+        self.config = AutoConfig.from_pretrained(model_name)
+        base_model = AutoModel.from_pretrained(model_name)
+        
+        # Set default target modules if not provided
+        if lora_target_modules is None:
+            lora_target_modules = ['query', 'value']  # Standard approach
+        
+        # Configure LoRA
+        print(f"🔧 Configuring LoRA with rank={lora_r}, alpha={lora_alpha}, dropout={lora_dropout}")
+        print(f"🎯 Target modules: {lora_target_modules}")
+        
+        lora_config = LoraConfig(
+            task_type=TaskType.FEATURE_EXTRACTION,  # We add custom classification head
+            r=lora_r,  # Rank
+            lora_alpha=lora_alpha,  # Scaling factor
+            lora_dropout=lora_dropout,  # Dropout
+            target_modules=lora_target_modules,  # Which attention matrices to adapt
+            bias="none",  # Don't adapt biases (Adapting biases adds minimal capacity but more parameters)
+            inference_mode=False  # Training mode
+        )
+        
+        # Apply LoRA to the base model
+        self.transformer = get_peft_model(base_model, lora_config)
+        
+        # Print trainable parameters info
+        trainable_params = sum(p.numel() for p in self.transformer.parameters() if p.requires_grad)
+        total_params = sum(p.numel() for p in self.transformer.parameters())
+        trainable_percent = 100 * trainable_params / total_params
+        print(f"✅ LoRA applied: {trainable_params:,} trainable parameters ({trainable_percent:.3f}% of {total_params:,} total)")
+        
+        # Add classification head
+        self.classifier = nn.Linear(self.config.hidden_size, num_labels)
+        self.dropout = nn.Dropout(hidden_dropout_prob)
+        
+        # Loss function for imbalanced data
+        if class_weights is not None:
+            self.loss_fct = nn.CrossEntropyLoss(weight=class_weights)
+            print("⚖️ Using weighted CrossEntropyLoss for imbalanced data")
+        else:
+            self.loss_fct = nn.CrossEntropyLoss()
+            print("📈 Using standard CrossEntropyLoss")
+        
+        # Store LoRA config in model config for saving
+        self.config.num_labels = num_labels
+        self.config.hidden_dropout_prob = hidden_dropout_prob
+        self.config.lora_r = lora_r
+        self.config.lora_alpha = lora_alpha
+        self.config.lora_dropout = lora_dropout
+        self.config.lora_target_modules = lora_target_modules
+    
+    def forward(self, input_ids, attention_mask, labels=None):
+        """
+        Forward pass through the model.
+        
+        Args:
+            input_ids: Token IDs [batch_size, seq_len]
+            attention_mask: Attention mask [batch_size, seq_len]
+            labels: Ground truth labels [batch_size] (optional)
+        
+        Returns:
+            Dict with 'loss' and 'logits'
+        """
+        # Get transformer outputs with LoRA adapters
+        outputs = self.transformer(input_ids=input_ids, attention_mask=attention_mask)
+        
+        # Handle different output formats for compatibility
+        if hasattr(outputs, 'pooler_output') and outputs.pooler_output is not None:
+            pooled_output = outputs.pooler_output
+        else:
+            # For models without pooler, use the [CLS] token (first token)
+            pooled_output = outputs.last_hidden_state[:, 0]
+        
+        # Apply dropout and classification (TRAINABLE PART)
+        pooled_output = self.dropout(pooled_output)
+        logits = self.classifier(pooled_output)
+        
+        # Calculate loss if labels provided
+        loss = None
+        if labels is not None:
+            loss = self.loss_fct(logits, labels)
+        
+        return {
+            'loss': loss,
+            'logits': logits
+        }
+    
+    def save_pretrained(self, save_directory: str):
+        """Save PEFT model in HuggingFace format."""
+        print(f"💾 Saving PEFT model to {save_directory}...")
+        os.makedirs(save_directory, exist_ok=True)
+        
+        # Save LoRA adapters using PEFT's built-in save method
+        self.transformer.save_pretrained(save_directory)
+        
+        # Save classification head and config
+        torch.save({
+            'classifier': self.classifier.state_dict(),
+            'dropout': self.dropout.state_dict()
+        }, os.path.join(save_directory, 'classification_head.bin'))
+        
+        # Save config
+        self.config.save_pretrained(save_directory)
+        
+        # Save model architecture info
+        with open(os.path.join(save_directory, 'model_info.json'), 'w') as f:
+            json.dump({
+                'model_type': 'PEFTEmotionClassifier',
+                'peft_type': 'LoRA',
+                'lora_r': self.config.lora_r,
+                'lora_alpha': self.config.lora_alpha,
+                'lora_dropout': self.config.lora_dropout,
+                'lora_target_modules': self.config.lora_target_modules,
+                'num_labels': self.config.num_labels,
+                'created_at': datetime.now().isoformat()
+            }, f, indent=2)
+        print(f"✅ PEFT model saved successfully\n")
+
 
 def compute_class_weights(train_labels: list, label2id: Dict[str, int]) -> torch.Tensor:
     """
