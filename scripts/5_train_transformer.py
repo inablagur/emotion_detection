@@ -196,8 +196,17 @@ class FrozenEmotionClassifier(nn.Module):
     
     def __init__(self, model_name: str, num_labels: int, hidden_dropout_prob: float = 0.1, 
                  class_weights=None):
+        """
+        Initialize frozen emotion classifier.
+        
+        Args:
+            model_name: HuggingFace model name (e.g., 'distilbert-base-uncased')
+            num_labels: Number of emotion classes
+            hidden_dropout_prob: Dropout for classification head (default 0.1 - community standard, proven effective across tasks)
+            class_weights: Optional class weights for imbalanced data
+        """
         super().__init__()
-        self.config = AutoConfig.from_pretrained(model_name)
+        self.config = AutoConfig.from_pretrained(model_name)     # This attribute is used for saving the model config (including the base model and the additions we add)
         self.transformer = AutoModel.from_pretrained(model_name)
         
         # Freeze the transformer encoder - SAVES COMPUTATION TIME
@@ -305,13 +314,13 @@ class PEFTEmotionClassifier(nn.Module):
             lora_alpha: LoRA scaling factor
             lora_dropout: Dropout probability for LoRA layers
             lora_target_modules: Which modules to apply LoRA to (default: ['query', 'value'])
-            hidden_dropout_prob: Dropout for classification head
+            hidden_dropout_prob: Dropout for classification head (default 0.1 - community standard, proven effective across tasks)
             class_weights: Optional class weights for imbalanced data
         """
         super().__init__()
         
         # Load base model and config
-        self.config = AutoConfig.from_pretrained(model_name)
+        self.config = AutoConfig.from_pretrained(model_name)    # This attribute is used for saving the model config (including the base model and the additions we add)
         base_model = AutoModel.from_pretrained(model_name)
         
         # Set default target modules if not provided
@@ -646,6 +655,197 @@ def train_frozen_model(model_name: str, train_df: pd.DataFrame, val_df: pd.DataF
     
     return model, metrics, tokenizer
 
+
+def train_peft_model(model_name: str, train_df: pd.DataFrame, val_df: pd.DataFrame, 
+                    label2id: Dict[str, int], args) -> Tuple[Any, Dict[str, Any], Any]:
+    """
+    Train PEFT model (LoRA adapters + classification head learn).
+    Uses parameter-efficient fine-tuning with LoRA adapters.
+    Handles imbalanced data and provides detailed training progress.
+    
+    Args:
+        model_name: Name of the transformer model
+        train_df: Training dataframe
+        val_df: Validation dataframe  
+        label2id: Label to ID mapping
+        args: Training arguments (includes LoRA hyperparameters)
+        
+    Returns:
+        Tuple of (model, metrics_dict, tokenizer)
+    """
+    print(f"🚀 Training PEFT {model_name} model...")
+    start_time = time.time()
+    
+    # Set device
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"🖥️ Using device: {device}")
+    
+    # Load tokenizer 
+    print("📝 Loading tokenizer...")
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    
+    # Compute class weights
+    # Handle imbalanced data based on loss_type argument
+    if args.loss_type == 'weighted':
+        class_weights = compute_class_weights(train_df['emotion'].tolist(), label2id)
+        class_weights = class_weights.to(device)
+    else:
+        class_weights = None
+        print("📈 Using standard CrossEntropyLoss (no imbalance handling)")
+    
+    # Create PEFT model with LoRA configuration
+    model = PEFTEmotionClassifier(
+        model_name, 
+        len(label2id),
+        lora_r=args.lora_r,
+        lora_alpha=args.lora_alpha,
+        lora_dropout=args.lora_dropout,
+        class_weights=class_weights
+    )
+    model.to(device)
+    
+    # Create datasets
+    train_dataset = EmotionDataset(
+        train_df['text'].tolist(),
+        train_df['label'].tolist(),
+        tokenizer,
+        max_length=args.max_length
+    )
+    
+    val_dataset = EmotionDataset(
+        val_df['text'].tolist(),
+        val_df['label'].tolist(),
+        tokenizer,
+        max_length=args.max_length
+    )
+    
+    # Create data loaders
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
+    
+    # Setup optimizer - trains LoRA adapters AND classification head
+    trainable_params = [p for p in model.parameters() if p.requires_grad]
+    num_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    num_frozen = sum(p.numel() for p in model.parameters() if not p.requires_grad)
+    total_params = num_trainable + num_frozen
+    print(f"🎯 Model parameters: {total_params:,} total | {num_trainable:,} trainable | {num_frozen:,} frozen")
+    
+    optimizer = torch.optim.AdamW(trainable_params, lr=args.learning_rate, weight_decay=args.weight_decay)
+    print(f"🎯 Using learning rate: {args.learning_rate}, weight decay: {args.weight_decay}")
+    
+    # Training loop with early stopping
+    model.train()
+    best_val_f1 = 0
+    patience_counter = 0
+    early_stopping_patience = 3
+    # TODO: Add optional early_stopping and value (either to the grid search or as an individual argument)
+    
+    print(f"🏃‍♂️ Starting PEFT training for {args.epochs} epochs...\n")
+    training_start = time.time()
+    
+    for epoch in range(args.epochs):
+        epoch_start = time.time()
+        total_loss = 0
+        model.train()
+        
+        for batch_idx, batch in enumerate(train_loader):
+            # Move batch to device
+            input_ids = batch['input_ids'].to(device)
+            attention_mask = batch['attention_mask'].to(device)
+            labels = batch['labels'].to(device)
+            
+            # Forward pass
+            optimizer.zero_grad()
+            outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
+            loss = outputs['loss']
+            
+            # Backward pass
+            loss.backward()
+            optimizer.step()
+            
+            total_loss += loss.item()
+            
+            if batch_idx % 100 == 0:
+                print(f'Epoch {epoch+1}/{args.epochs}, Batch {batch_idx}/{len(train_loader)}, Loss: {loss.item():.4f}')
+        
+        # Validation
+        model.eval()
+        val_loss = 0
+        val_predictions = []
+        val_labels = []
+        
+        with torch.no_grad(): # Don't compute gradients (faster, saves memory)
+            for batch in val_loader:
+                input_ids = batch['input_ids'].to(device)
+                attention_mask = batch['attention_mask'].to(device)
+                labels = batch['labels'].to(device)
+                
+                outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
+                val_loss += outputs['loss'].item()
+                
+                logits = outputs['logits']
+                predictions = torch.argmax(logits, dim=1)
+                
+                val_predictions.extend(predictions.cpu().numpy())  # Convert to cpu + numpy array to allow scikit-learn evaluation
+                val_labels.extend(labels.cpu().numpy()) # Convert to cpu + numpy array to allow scikit-learn evaluation
+        
+        # Save predictions for final metrics calculation
+        last_val_predictions = val_predictions
+        last_val_labels = val_labels
+        
+        # Calculate only metrics needed for early stopping and progress tracking
+        val_accuracy = accuracy_score(val_labels, val_predictions)
+        val_micro_f1 = f1_score(val_labels, val_predictions, average='micro')
+        avg_val_loss = val_loss / len(val_loader)
+        
+        epoch_time = time.time() - epoch_start
+        print(f'Epoch {epoch+1}/{args.epochs} - Val Loss: {avg_val_loss:.4f}, Val Accuracy: {val_accuracy:.4f}, Val Micro-F1: {val_micro_f1:.4f} (Time: {epoch_time:.1f}s)')
+        
+        # Early stopping based on micro-F1
+        if val_micro_f1 > best_val_f1:
+            best_val_f1 = val_micro_f1
+            patience_counter = 0
+        else:
+            patience_counter += 1
+            
+        if patience_counter >= early_stopping_patience:
+            print(f"⏹️ Early stopping at epoch {epoch+1}")
+            break
+    
+    # Calculate additional validation metrics once (using last epoch's predictions)
+    print("\n📊 Calculating final validation metrics...")
+    val_accuracy = accuracy_score(last_val_labels, last_val_predictions)
+    val_micro_f1 = f1_score(last_val_labels, last_val_predictions, average='micro')
+    val_macro_f1 = f1_score(last_val_labels, last_val_predictions, average='macro')
+    val_weighted_f1 = f1_score(last_val_labels, last_val_predictions, average='weighted')
+    
+    total_time = time.time() - start_time
+    training_time = time.time() - training_start
+    
+    metrics = {
+        'model': model_name,
+        'mode': args.mode,
+        # Validation metrics (primary for model selection)
+        'val_accuracy': val_accuracy,
+        'val_micro_f1': val_micro_f1,  # PRIMARY metric for imbalanced data
+        'val_macro_f1': val_macro_f1,
+        'val_weighted_f1': val_weighted_f1,
+        # Other info
+        'loss': avg_val_loss,
+        'epochs_trained': epoch + 1,
+        'total_time_seconds': total_time,
+        'training_time_seconds': training_time,
+        'classification_report': classification_report(
+            last_val_labels, last_val_predictions, 
+            target_names=list(label2id.keys()),
+            output_dict=True
+        )
+    }
+    
+    print(f"✅ PEFT training completed in {total_time:.1f}s (training: {training_time:.1f}s)")
+    print(f"📊 Validation Metrics - Accuracy: {val_accuracy:.3f}, Micro-F1: {val_micro_f1:.3f}, Macro-F1: {val_macro_f1:.3f}")
+    
+    return model, metrics, tokenizer
 
 
 # --------------------------------------------------------------------------------------------------------------------------------------------
