@@ -10,6 +10,7 @@ from typing import Dict, Any, Tuple, Optional
 
 import traceback
 import warnings
+import copy
 warnings.filterwarnings("ignore")
 
 import torch
@@ -21,7 +22,7 @@ from sklearn.metrics import classification_report, confusion_matrix, accuracy_sc
 from sklearn.utils.class_weight import compute_class_weight
 import matplotlib.pyplot as plt
 import seaborn as sns
-from transformers import AutoTokenizer, AutoModel, AutoConfig
+from transformers import AutoTokenizer, AutoModel, AutoConfig, Trainer, TrainingArguments, EarlyStoppingCallback
 from peft import LoraConfig, get_peft_model, TaskType
 
 from datetime import datetime
@@ -168,7 +169,7 @@ class EmotionDataset(torch.utils.data.Dataset):
     def __len__(self):
         return len(self.texts)
     
-    def __getitem__(self, idx):
+    def __getitem__(self, idx):    # TODO: Understand what does it do and what is it used for. When I call this function it returns input_ids and attention_mask and labels. What is the difference between them and why? even though here it shows text and labels. Where does the input_ids and attention_mask come from?
         text = str(self.texts[idx])
         label = self.labels[idx]
         
@@ -205,21 +206,21 @@ class FrozenEmotionClassifier(nn.Module):
             hidden_dropout_prob: Dropout for classification head (default 0.1 - community standard, proven effective across tasks)
             class_weights: Optional class weights for imbalanced data
         """
-        super().__init__()
+        super().__init__()    # TODO: Understand what does it do and what is it used for
         self.config = AutoConfig.from_pretrained(model_name)     # This attribute is used for saving the model config (including the base model and the additions we add)
-        self.transformer = AutoModel.from_pretrained(model_name)
+        self.transformer = AutoModel.from_pretrained(model_name)    # Understand what does it do and what is it used for, and what is the difference between this and self.config
         
         # Freeze the transformer encoder - SAVES COMPUTATION TIME
         print(f"🧊 Freezing transformer encoder parameters...")
-        for param in self.transformer.parameters():
+        for param in self.transformer.parameters():     # TODO: It runs over all the parameters in the transformer and makes them non-trainable, but how many times it loops and why? Should it run the number of layers? or parameters? What is the size of self.transformer.parameters()
             param.requires_grad = False
-        print(f"✅ Frozen {sum(1 for p in self.transformer.parameters())} parameters")
+        print(f"✅ Frozen {sum(1 for p in self.transformer.parameters())} parameters")   # TODO: Add this count to the before loop, and then only print the count after the loop, assuming it does the same thing... It says frozen 100 parameters. What are they and why?
         
         # Classification head - start with linear head
         # TODO: Experiment with MLP head architecture (Linear→GELU→Dropout→Linear) for better performance
         # TODO: Optional: Make head architecture configurable via hyperparameter grid
         self.classifier = nn.Linear(self.config.hidden_size, num_labels)
-        self.dropout = nn.Dropout(hidden_dropout_prob)
+        self.dropout = nn.Dropout(hidden_dropout_prob)   # TODO: Question - It says deopout(p=0.1, inplace=False) - what does it mean? What is the difference between inplace=True and inplace=False? When does each of them used? How does it know it's false here? It's the default? Did I configured it somewhere before?
         
         # Loss function for imbalanced data (simplified - only weighted or standard)
         if class_weights is not None:
@@ -438,6 +439,33 @@ class PEFTEmotionClassifier(nn.Module):
         print(f"✅ PEFT model saved successfully\n")
 
 
+def compute_metrics(eval_pred):
+    """
+    Compute metrics for HuggingFace Trainer.
+    
+    Args:
+        eval_pred: Tuple of (predictions, labels)
+        
+    Returns:
+        Dict with computed metrics
+    """
+    predictions, labels = eval_pred
+    predictions = np.argmax(predictions, axis=1)
+    
+    accuracy = accuracy_score(labels, predictions)
+    micro_f1 = f1_score(labels, predictions, average='micro')
+    macro_f1 = f1_score(labels, predictions, average='macro')
+    weighted_f1 = f1_score(labels, predictions, average='weighted')
+    
+    return {
+        'accuracy': accuracy,
+        'f1': micro_f1,  # Primary metric
+        'f1_micro': micro_f1,
+        'f1_macro': macro_f1,
+        'f1_weighted': weighted_f1
+    }
+
+
 def compute_class_weights(train_labels: list, label2id: Dict[str, int]) -> torch.Tensor:
     """
     Compute class weights for imbalanced dataset.
@@ -509,7 +537,7 @@ def train_frozen_model(model_name: str, train_df: pd.DataFrame, val_df: pd.DataF
         len(label2id), 
         class_weights=class_weights
     )
-    model.to(device)
+    model.to(device)   # TODO: Understand what does it do and what is it used for
     
     # Create datasets
     train_dataset = EmotionDataset(
@@ -538,21 +566,26 @@ def train_frozen_model(model_name: str, train_df: pd.DataFrame, val_df: pd.DataF
     print(f"🎯 Model parameters: {total_params:,} total | {num_trainable:,} trainable | {num_frozen:,} frozen")
     
     optimizer = torch.optim.AdamW(trainable_params, lr=args.learning_rate, weight_decay=0.01)
-    print(f"🎯 Using learning rate: {args.learning_rate}")
     
     # Training loop with early stopping
-    model.train()
-    best_val_f1 = 0
+    best_val_micro_f1 = 0
     patience_counter = 0
-    early_stopping_patience = 3
-    # TODO: Add optional early_stopping and value (either to the grid search or as an individual argument)
+    early_stopping_patience = 3  # TODO: Add optional early_stopping and value (either to the grid search or as an individual argument)
     
-    print(f"🏃‍♂️ Starting training for {args.epochs} epochs...\n")
+    # Track best model state
+    best_model_state = None
+    best_val_predictions = None
+    best_val_labels = None
+    best_avg_val_loss = None
+    best_val_accuracy = None
+    
     training_start = time.time()
     
     for epoch in range(args.epochs):
         epoch_start = time.time()
         total_loss = 0
+        # Set training mode - enables dropout, batch norm training behavior
+        # Called at start of each epoch to ensure proper mode after validation
         model.train()
         
         for batch_idx, batch in enumerate(train_loader):
@@ -581,7 +614,7 @@ def train_frozen_model(model_name: str, train_df: pd.DataFrame, val_df: pd.DataF
         val_predictions = []
         val_labels = []
         
-        with torch.no_grad(): # Don't compute gradients (faster, saves memory)
+        with torch.no_grad():  # Don't compute gradients (faster, saves memory)
             for batch in val_loader:
                 input_ids = batch['input_ids'].to(device)
                 attention_mask = batch['attention_mask'].to(device)
@@ -596,21 +629,27 @@ def train_frozen_model(model_name: str, train_df: pd.DataFrame, val_df: pd.DataF
                 val_predictions.extend(predictions.cpu().numpy())  # Convert to cpu + numpy array to allow scikit-learn evaluation
                 val_labels.extend(labels.cpu().numpy()) # Convert to cpu + numpy array to allow scikit-learn evaluation
         
-        # Save predictions for final metrics calculation
-        last_val_predictions = val_predictions
-        last_val_labels = val_labels
-        
-        # Calculate only metrics needed for early stopping and progress tracking
-        val_accuracy = accuracy_score(val_labels, val_predictions)
-        val_micro_f1 = f1_score(val_labels, val_predictions, average='micro')
-        avg_val_loss = val_loss / len(val_loader)
+        # Calculate metrics needed for early stopping and progress tracking
+        val_accuracy = accuracy_score(val_labels, val_predictions)   # Used for progress tracking only
+        val_micro_f1 = f1_score(val_labels, val_predictions, average='micro')  # Used for progress tracking and early stopping, as well as to find the best epoch results
+        avg_val_loss = val_loss / len(val_loader)  # Used for progress tracking only
         
         epoch_time = time.time() - epoch_start
         print(f'Epoch {epoch+1}/{args.epochs} - Val Loss: {avg_val_loss:.4f}, Val Accuracy: {val_accuracy:.4f}, Val Micro-F1: {val_micro_f1:.4f} (Time: {epoch_time:.1f}s)')
         
-        # Early stopping based on micro-F1
-        if val_micro_f1 > best_val_f1:
-            best_val_f1 = val_micro_f1
+        # Early stopping based on micro-F1 - save best model state, predictions, labels
+        # CRITICAL: Save first epoch OR any epoch that's better
+        if best_model_state is None or val_micro_f1 > best_val_micro_f1 or (val_micro_f1 == best_val_micro_f1 and avg_val_loss < best_avg_val_loss):
+            best_val_micro_f1 = val_micro_f1
+            # Save best model state - use deepcopy to ensure complete independence
+            best_model_state = copy.deepcopy(model.state_dict())
+            # Save best predictions and labels
+            best_val_predictions = val_predictions.copy()
+            best_val_labels = val_labels.copy()
+
+            # Save best metrics for the epoch
+            best_avg_val_loss = avg_val_loss  # Best validation loss
+            best_val_accuracy = val_accuracy  # Best validation accuracy
             patience_counter = 0
         else:
             patience_counter += 1
@@ -619,13 +658,19 @@ def train_frozen_model(model_name: str, train_df: pd.DataFrame, val_df: pd.DataF
             print(f"⏹️ Early stopping at epoch {epoch+1}")
             break
     
-    # Calculate additional validation metrics once (using last epoch's predictions)
-    print("\n📊 Calculating final validation metrics...")
-    val_accuracy = accuracy_score(last_val_labels, last_val_predictions)
-    val_micro_f1 = f1_score(last_val_labels, last_val_predictions, average='micro')
-    val_macro_f1 = f1_score(last_val_labels, last_val_predictions, average='macro')
-    val_weighted_f1 = f1_score(last_val_labels, last_val_predictions, average='weighted')
+    # Load best model state before final metrics calculation
+    if best_model_state is not None:
+        missing_keys, unexpected_keys = model.load_state_dict(best_model_state, strict=False)
+        if missing_keys:
+            print(f"⚠️ Warning: Missing keys when loading: {len(missing_keys)} keys")
+        if unexpected_keys:
+            print(f"⚠️ Warning: Unexpected keys when loading: {len(unexpected_keys)} keys")
+        print(f"✅ Loaded best model state (val micro-F1: {best_val_micro_f1:.4f})")
     
+    # Calculate final validation metrics using best predictions
+    print("\n📊 Calculating final validation metrics using best model...")
+    val_macro_f1 = f1_score(best_val_labels, best_val_predictions, average='macro')
+    val_weighted_f1 = f1_score(best_val_labels, best_val_predictions, average='weighted')
     
     total_time = time.time() - start_time
     training_time = time.time() - training_start
@@ -634,25 +679,26 @@ def train_frozen_model(model_name: str, train_df: pd.DataFrame, val_df: pd.DataF
         'model': model_name,
         'mode': args.mode,
         # Validation metrics (primary for model selection)
-        'val_accuracy': val_accuracy,
-        'val_micro_f1': val_micro_f1,  # PRIMARY metric for imbalanced data
+        'val_accuracy': best_val_accuracy,
+        'val_micro_f1': best_val_micro_f1,  # PRIMARY metric for imbalanced data
         'val_macro_f1': val_macro_f1,
         'val_weighted_f1': val_weighted_f1,
         # Other info
-        'loss': avg_val_loss,
+        'loss': best_avg_val_loss,
         'epochs_trained': epoch + 1,
         'total_time_seconds': total_time,
         'training_time_seconds': training_time,
         'classification_report': classification_report(
-            last_val_labels, last_val_predictions, 
+            best_val_labels, best_val_predictions, 
             target_names=list(label2id.keys()),
             output_dict=True
         )
     }
     
     print(f"✅ Training completed in {total_time:.1f}s (training: {training_time:.1f}s)")
-    print(f"📊 Validation Metrics - Accuracy: {val_accuracy:.3f}, Micro-F1: {val_micro_f1:.3f}, Macro-F1: {val_macro_f1:.3f}")
+    print(f"📊 Validation Metrics - Accuracy: {best_val_accuracy:.3f}, Micro-F1: {best_val_micro_f1:.3f}, Macro-F1: {val_macro_f1:.3f}")
     
+    # Return best model, best metrics, and tokenizer (same tokenizer for all combinations of same model, loaded once per model)
     return model, metrics, tokenizer
 
 
@@ -731,21 +777,26 @@ def train_peft_model(model_name: str, train_df: pd.DataFrame, val_df: pd.DataFra
     print(f"🎯 Model parameters: {total_params:,} total | {num_trainable:,} trainable | {num_frozen:,} frozen")
     
     optimizer = torch.optim.AdamW(trainable_params, lr=args.learning_rate, weight_decay=args.weight_decay)
-    print(f"🎯 Using learning rate: {args.learning_rate}, weight decay: {args.weight_decay}")
     
     # Training loop with early stopping
-    model.train()
-    best_val_f1 = 0
+    best_val_micro_f1 = 0
     patience_counter = 0
-    early_stopping_patience = 3
-    # TODO: Add optional early_stopping and value (either to the grid search or as an individual argument)
+    early_stopping_patience = 3  # TODO: Add optional early_stopping and value (either to the grid search or as an individual argument)
     
-    print(f"🏃‍♂️ Starting PEFT training for {args.epochs} epochs...\n")
+    # Track best model state
+    best_model_state = None
+    best_val_predictions = None
+    best_val_labels = None
+    best_avg_val_loss = None
+    best_val_accuracy = None
+    
     training_start = time.time()
     
     for epoch in range(args.epochs):
         epoch_start = time.time()
         total_loss = 0
+        # Set training mode - enables dropout, batch norm training behavior
+        # Called at start of each epoch to ensure proper mode after validation
         model.train()
         
         for batch_idx, batch in enumerate(train_loader):
@@ -774,7 +825,7 @@ def train_peft_model(model_name: str, train_df: pd.DataFrame, val_df: pd.DataFra
         val_predictions = []
         val_labels = []
         
-        with torch.no_grad(): # Don't compute gradients (faster, saves memory)
+        with torch.no_grad():  # Don't compute gradients (faster, saves memory)
             for batch in val_loader:
                 input_ids = batch['input_ids'].to(device)
                 attention_mask = batch['attention_mask'].to(device)
@@ -789,21 +840,26 @@ def train_peft_model(model_name: str, train_df: pd.DataFrame, val_df: pd.DataFra
                 val_predictions.extend(predictions.cpu().numpy())  # Convert to cpu + numpy array to allow scikit-learn evaluation
                 val_labels.extend(labels.cpu().numpy()) # Convert to cpu + numpy array to allow scikit-learn evaluation
         
-        # Save predictions for final metrics calculation
-        last_val_predictions = val_predictions
-        last_val_labels = val_labels
-        
-        # Calculate only metrics needed for early stopping and progress tracking
-        val_accuracy = accuracy_score(val_labels, val_predictions)
-        val_micro_f1 = f1_score(val_labels, val_predictions, average='micro')
-        avg_val_loss = val_loss / len(val_loader)
+        # Calculate metrics needed for early stopping and progress tracking
+        val_accuracy = accuracy_score(val_labels, val_predictions)   # Used for progress tracking only
+        val_micro_f1 = f1_score(val_labels, val_predictions, average='micro')  # Used for progress tracking and early stopping, as well as to find the best epoch results
+        avg_val_loss = val_loss / len(val_loader)  # Used for progress tracking only
         
         epoch_time = time.time() - epoch_start
         print(f'Epoch {epoch+1}/{args.epochs} - Val Loss: {avg_val_loss:.4f}, Val Accuracy: {val_accuracy:.4f}, Val Micro-F1: {val_micro_f1:.4f} (Time: {epoch_time:.1f}s)')
         
-        # Early stopping based on micro-F1
-        if val_micro_f1 > best_val_f1:
-            best_val_f1 = val_micro_f1
+        # Early stopping based on micro-F1 - save best model state, predictions, labels
+        # CRITICAL: Save first epoch OR any epoch that's better
+        if best_model_state is None or val_micro_f1 > best_val_micro_f1 or (val_micro_f1 == best_val_micro_f1 and avg_val_loss < best_avg_val_loss):
+            best_val_micro_f1 = val_micro_f1
+            # Save best model state - use deepcopy to ensure complete independence
+            best_model_state = copy.deepcopy(model.state_dict())
+            # Save best predictions and labels
+            best_val_predictions = val_predictions.copy()
+            best_val_labels = val_labels.copy()
+            # Save best metrics for the epoch
+            best_avg_val_loss = avg_val_loss  # Best validation loss
+            best_val_accuracy = val_accuracy  # Best validation accuracy
             patience_counter = 0
         else:
             patience_counter += 1
@@ -812,12 +868,19 @@ def train_peft_model(model_name: str, train_df: pd.DataFrame, val_df: pd.DataFra
             print(f"⏹️ Early stopping at epoch {epoch+1}")
             break
     
-    # Calculate additional validation metrics once (using last epoch's predictions)
-    print("\n📊 Calculating final validation metrics...")
-    val_accuracy = accuracy_score(last_val_labels, last_val_predictions)
-    val_micro_f1 = f1_score(last_val_labels, last_val_predictions, average='micro')
-    val_macro_f1 = f1_score(last_val_labels, last_val_predictions, average='macro')
-    val_weighted_f1 = f1_score(last_val_labels, last_val_predictions, average='weighted')
+    # Load best model state before final metrics calculation
+    if best_model_state is not None:
+        missing_keys, unexpected_keys = model.load_state_dict(best_model_state, strict=False)
+        if missing_keys:
+            print(f"⚠️ Warning: Missing keys when loading: {len(missing_keys)} keys")
+        if unexpected_keys:
+            print(f"⚠️ Warning: Unexpected keys when loading: {len(unexpected_keys)} keys")
+        print(f"✅ Loaded best model state (val micro-F1: {best_val_micro_f1:.4f})")
+    
+    # Calculate final validation metrics using best predictions
+    print("\n📊 Calculating final validation metrics using best model...")
+    val_macro_f1 = f1_score(best_val_labels, best_val_predictions, average='macro')
+    val_weighted_f1 = f1_score(best_val_labels, best_val_predictions, average='weighted')
     
     total_time = time.time() - start_time
     training_time = time.time() - training_start
@@ -826,25 +889,26 @@ def train_peft_model(model_name: str, train_df: pd.DataFrame, val_df: pd.DataFra
         'model': model_name,
         'mode': args.mode,
         # Validation metrics (primary for model selection)
-        'val_accuracy': val_accuracy,
-        'val_micro_f1': val_micro_f1,  # PRIMARY metric for imbalanced data
+        'val_accuracy': best_val_accuracy,
+        'val_micro_f1': best_val_micro_f1,  # PRIMARY metric for imbalanced data
         'val_macro_f1': val_macro_f1,
         'val_weighted_f1': val_weighted_f1,
         # Other info
-        'loss': avg_val_loss,
+        'loss': best_avg_val_loss,
         'epochs_trained': epoch + 1,
         'total_time_seconds': total_time,
         'training_time_seconds': training_time,
         'classification_report': classification_report(
-            last_val_labels, last_val_predictions, 
+            best_val_labels, best_val_predictions, 
             target_names=list(label2id.keys()),
             output_dict=True
         )
     }
     
     print(f"✅ PEFT training completed in {total_time:.1f}s (training: {training_time:.1f}s)")
-    print(f"📊 Validation Metrics - Accuracy: {val_accuracy:.3f}, Micro-F1: {val_micro_f1:.3f}, Macro-F1: {val_macro_f1:.3f}")
+    print(f"📊 Validation Metrics - Accuracy: {best_val_accuracy:.3f}, Micro-F1: {best_val_micro_f1:.3f}, Macro-F1: {val_macro_f1:.3f}")
     
+    # Return best model, best metrics, and tokenizer (same for all combinations of same model)
     return model, metrics, tokenizer
 
 
@@ -878,7 +942,10 @@ def train_model(method: str, model_name: str, train_df: pd.DataFrame,
             self.learning_rate = config.get('learning_rate', 2e-5)
             self.loss_type = config.get('loss_type', 'standard')
             self.weight_decay = config.get('weight_decay', 0.0)
-            # Additional method-specific parameters can be added here when implementing finetune/peft
+            # PEFT-specific parameters
+            self.lora_r = config.get('lora_r', 8)
+            self.lora_alpha = config.get('lora_alpha', 16)
+            self.lora_dropout = config.get('lora_dropout', 0.1)
     
     args = Args(config, model_name, method)
     
@@ -890,7 +957,9 @@ def train_model(method: str, model_name: str, train_df: pd.DataFrame,
         raise NotImplementedError(f"Training method '{method}' not yet implemented")
     elif method == 'peft':
         # TODO: Implement PEFT/LoRA when ready
-        raise NotImplementedError(f"Training method '{method}' not yet implemented")
+        # raise NotImplementedError(f"Training method '{method}' not yet implemented")
+        return train_peft_model(model_name, train_df, val_df, label2id, args)
+    
     else:
         raise ValueError(f"Unknown training method: {method}")
 
@@ -977,6 +1046,8 @@ def run_randomized_search(train_df: pd.DataFrame, val_df: pd.DataFrame,
             
             try:
                 start_time = time.time()
+                # Returns best model (based on validation performance), best metrics, and tokenizer
+                # Tokenizer is same for all combinations of same model (loaded once per model)
                 model, metrics, tokenizer = train_model(
                     method, model_name, train_df, val_df, label2id, config
                 )
@@ -1008,15 +1079,17 @@ def run_randomized_search(train_df: pd.DataFrame, val_df: pd.DataFrame,
                 
                 # Check if this is the new winner (using validation micro-F1)
                 if metrics['val_micro_f1'] > winner_config.get('val_micro_f1', 0.0):
+                    # Store winner info: model name, method, config, full metrics dict, trained model, and tokenizer
+                    # Note: config and metrics are unpacked separately for easy access
                     winner_config = {
                         'model': model_name,
                         'method': method,
                         'config': config,
-                        'metrics': metrics,
+                        'metrics': metrics,   
                         'trained_model': model,
-                        'tokenizer': tokenizer,
-                        **config,
-                        **metrics
+                        'tokenizer': tokenizer,  # Same tokenizer for all combinations of same model
+                        **config,  # Unpack hyperparameters for easy access
+                        **metrics  # Unpack metrics for easy access
                     }
                     print(f"🏆 NEW WINNER! {model_name} with Val Micro-F1: {metrics['val_micro_f1']:.4f}")
                 
